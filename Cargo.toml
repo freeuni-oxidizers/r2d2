@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+	"serde-fp",
+	"rdd-sample",
+]
