@@ -1,6 +1,10 @@
 use clap::Parser;
 use runner;
 use std::path::PathBuf;
+use std::fs;
+
+#[cfg(test)]
+use pretty_assertions::assert_eq;
 
 #[derive(Parser, Debug)]
 #[clap(about="Chupacabra")]
@@ -9,25 +13,28 @@ struct Args {
     code_path: PathBuf,
 
     #[clap(short, long, parse(from_os_str), default_value = "./it_works/input")]
-    intput_path: PathBuf,
+    input_path: PathBuf,
 
     #[clap(short, long, parse(from_os_str), default_value = "./it_works/output")]
     output_path: PathBuf,
+    
+    #[clap(short, long, parse(from_os_str), default_value = "./it_works/expected_output")]
+    expected_output_path: PathBuf,
 }
 
 fn main() {
     let args = Args::parse();
-    // option 1: 
-    // use hardcoded or argv to get the paths for code in and out
-
-    // option 2:
-    // traverse dir to find all test subdirs with one *.rs, *.in, *.out files
-    
-    runner::run(args.code_path, args.intput_path, args.output_path);    
-    // run tests, [delegate that to runner]
-    //   - run test subdirs in parallel??
-    //   - run test subdirs in serial
+    runner::run(&args.code_path, &args.input_path, &args.output_path);    
 
     // assert output files match
-    // assert errorcodes and stderrs
+    let output = fs::read_to_string(&args.output_path).unwrap();
+    let expected = fs::read_to_string(&args.expected_output_path).unwrap();
+    println!("{}", output);
+    println!("{}", expected);
+    assert_eq!(output, expected);
+
+    // TODO(zvikinoza): assert errorcodes and stderrs
+    // TODO(zvikinoza): run test in parallel 
+    // TODO(zvikinoza): move testing from main to test module
+    // TODO(zvikinoza): impl prologue and epilogue (e.g. setup and teardown)
 }
