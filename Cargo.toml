@@ -3,4 +3,7 @@
 members = [
 	"serde-fp",
 	"rdd-sample",
+	"runner",
+	"tester",
+	"tester/it_works",
 ]

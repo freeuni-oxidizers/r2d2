@@ -173,7 +173,7 @@ mod tests {
 
         let json = serde_json::to_string_pretty(&mapper).unwrap();
 
-        println!("Serialized mapper: {}", json);
+        println!("serialized mapper: {}", json);
 
         let mapper_serde: Mapper<String, usize> = serde_json::from_str(&json).unwrap();
 

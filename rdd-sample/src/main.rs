@@ -1,7 +1,7 @@
 use std::{
     fmt::Debug,
     fs::File,
-    io::{Read, Write},
+    io::Write,
 };
 
 use anyhow::Result;
