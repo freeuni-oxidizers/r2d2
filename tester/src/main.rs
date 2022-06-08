@@ -9,8 +9,8 @@ use pretty_assertions::assert_eq;
 #[derive(Parser, Debug)]
 #[clap(about="Chupacabra")]
 struct Args {
-    #[clap(short, long, parse(from_os_str), default_value = "./it_works")]
-    code_path: PathBuf,
+    #[clap(short, long, parse(from_os_str), default_value = "it_works")]
+    cargo_package_path: PathBuf,
 
     #[clap(short, long, parse(from_os_str), default_value = "./it_works/input")]
     input_path: PathBuf,
@@ -24,13 +24,11 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    runner::run(&args.code_path, &args.input_path, &args.output_path);    
+    runner::run(&args.cargo_package_path, &args.input_path, &args.output_path).unwrap();
 
     // assert output files match
     let output = fs::read_to_string(&args.output_path).unwrap();
     let expected = fs::read_to_string(&args.expected_output_path).unwrap();
-    println!("{}", output);
-    println!("{}", expected);
     assert_eq!(output, expected);
 
     // TODO(zvikinoza): assert errorcodes and stderrs
