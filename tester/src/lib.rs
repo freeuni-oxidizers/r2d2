@@ -32,11 +32,11 @@ mod tests {
 
     #[test]
     fn master_w_single_worker() {
-        let program= PathBuf::from("it_works");
+        let program= PathBuf::from("master_w_single_worker");
         let input= program.join("input");
         let output= program.join("output");
         let expected= program.join("expected");
-
+        println!("{:?}, {:?}, {:?}, {:?}", program, input, output, expected);
         runner::run_wm(&program, &input, &output);
 
         // assert output files match

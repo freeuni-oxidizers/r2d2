@@ -7,4 +7,6 @@ members = [
 	"tester",
 	"tester/it_works",
 	"tester/master_w_single_worker",
+	"master",
+	"worker",
 ]
