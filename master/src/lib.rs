@@ -1,9 +1,12 @@
-use std::{net::{TcpListener, TcpStream}, thread};
-use runner::{RUNNER_PORT, MASTER_PORT};
+use runner::{MASTER_PORT, RUNNER_PORT};
 use std::io::{Read, Write};
+use std::{
+    net::{TcpListener, TcpStream},
+    thread,
+};
 
 pub struct Master;
-    
+
 impl Master {
     pub fn run() {
         println!("master: starting");
@@ -14,8 +17,8 @@ impl Master {
             match stream {
                 Ok(stream) => {
                     // thread::spawn(move|| {
-                        // connection succeeded
-                       Master::handle_worker(stream)
+                    // connection succeeded
+                    Master::handle_worker(stream)
                     // });
                 }
                 Err(e) => {
@@ -25,7 +28,7 @@ impl Master {
             break;
         }
         println!("Master handled worker, notifying runner");
-        
+
         // update runner
         match TcpStream::connect(format!("127.0.0.1:{}", RUNNER_PORT)) {
             Ok(mut stream) => {
@@ -42,8 +45,10 @@ impl Master {
 
     fn handle_worker(mut stream: TcpStream) {
         let mut data = [0 as u8; 1024]; // using 1024 byte buffer
-        let size = stream.read(&mut data)
-            .expect(&format!("An error occurred, terminating connection with {}", stream.peer_addr().unwrap()));
+        let size = stream.read(&mut data).expect(&format!(
+            "An error occurred, terminating connection with {}",
+            stream.peer_addr().unwrap()
+        ));
         if &data[..size] == b"Can I start?" {
             println!("master: replying to worker: You must!");
             stream.write(b"You must!").unwrap();
@@ -55,13 +60,14 @@ impl Master {
             // TODO(zvikinoza): horrible way of doing this
             // try rpc or `remoc` crate !!!
             thread::sleep(std::time::Duration::from_millis(1000));
-            let size = stream.read(&mut data)
-                .expect(&format!("An error occurred, terminating connection with {}", stream.peer_addr().unwrap()));
+            let size = stream.read(&mut data).expect(&format!(
+                "An error occurred, terminating connection with {}",
+                stream.peer_addr().unwrap()
+            ));
             if &data[..size] == b"Task finished" {
                 println!("master: reply from worker: Task finished");
                 break;
             }
         }
     }
-
 }

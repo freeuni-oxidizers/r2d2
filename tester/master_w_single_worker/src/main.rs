@@ -2,22 +2,32 @@ use clap::Parser;
 use std::fs;
 
 #[derive(Parser, Debug)]
-#[clap(about="Stiffler")]
+#[clap(about = "Stiffler")]
 struct Args {
-    #[clap(short, long, parse(from_os_str), default_value = "./master_w_single_worker/input")]
+    #[clap(
+        short,
+        long,
+        parse(from_os_str),
+        default_value = "./master_w_single_worker/input"
+    )]
     intput_path: std::path::PathBuf,
 
-    #[clap(short, long, parse(from_os_str), default_value = "./master_w_single_worker/output")]
+    #[clap(
+        short,
+        long,
+        parse(from_os_str),
+        default_value = "./master_w_single_worker/output"
+    )]
     output_path: std::path::PathBuf,
 
-    #[clap(long, takes_value=false)]
+    #[clap(long, takes_value = false)]
     master: bool,
 }
 
 pub mod blast {
+    use super::{Args, Parser};
     use master::Master;
     use worker::Worker;
-    use super::{Args, Parser};
 
     pub fn initialize() {
         let args = Args::parse();
@@ -29,7 +39,7 @@ pub mod blast {
         }
         // drop(args);
     }
-    
+
     /// terminate is only reachable for worker nodes
     pub fn terminate() {
         Worker::terminate();

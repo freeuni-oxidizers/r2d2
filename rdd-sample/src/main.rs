@@ -1,8 +1,4 @@
-use std::{
-    fmt::Debug,
-    fs::File,
-    io::Write,
-};
+use std::{fmt::Debug, fs::File, io::Write};
 
 use anyhow::Result;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
