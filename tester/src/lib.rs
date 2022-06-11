@@ -1,22 +1,3 @@
-use clap::Parser;
-use std::path::PathBuf;
-
-#[derive(Parser, Debug)]
-#[clap(about="Chupacabra")]
-struct Args {
-    #[clap(short, long, parse(from_os_str), default_value = "it_works")]
-    cargo_package_path: PathBuf,
-
-    #[clap(short, long, parse(from_os_str), default_value = "./it_works/input")]
-    input_path: PathBuf,
-
-    #[clap(short, long, parse(from_os_str), default_value = "./it_works/output")]
-    output_path: PathBuf,
-    
-    #[clap(short, long, parse(from_os_str), default_value = "./it_works/expected_output")]
-    expected_output_path: PathBuf,
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -29,20 +10,41 @@ mod tests {
     use runner;
     #[cfg(test)]
     use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
 
-    use super::*;
+    // #[test]
+    // fn it_works() {
+    //     let package_path = PathBuf::from("it_works");
+    //     let input_path = PathBuf::from("./it_works/input");
+    //     let output_path = PathBuf::from("./it_works/output");
+    //     let expected_output_path = PathBuf::from("./it_works/expected_output");
+    //     runner::run(&package_path, &input_path, &output_path).unwrap();
 
-   #[test]
-    fn it_works() {
-        let args = Args::parse();
-        runner::run(&args.cargo_package_path, &args.input_path, &args.output_path).unwrap();
+    //     // assert output files match
+    //     let output = fs::read_to_string(&output_path).unwrap();
+    //     let expected = fs::read_to_string(&expected_output_path).unwrap();
+    //     assert_eq!(output, expected);
 
+    //     // THIS WILL BECOME VERY TEDIOUS AND UNSTABLE !!!
+    //     fs::remove_file(output_path).unwrap();
+    // }
+
+    #[test]
+    fn master_w_single_worker() {
+        eprintln!("master_w_single_worker");
+        let package_path = PathBuf::from("master_w_single_worker");
+        let input_path = PathBuf::from("./master_w_single_worker/input");
+        let output_path = PathBuf::from("./master_w_single_worker/output");
+        let expected_output_path = PathBuf::from("./master_w_single_worker/expected_output");
+
+        runner::run_wm(&package_path, &input_path, &output_path);
         // assert output files match
-        let output = fs::read_to_string(&args.output_path).unwrap();
-        let expected = fs::read_to_string(&args.expected_output_path).unwrap();
+        let output = fs::read_to_string(&output_path).unwrap();
+        println!("tester sees woker's output: {}", output);
+        let expected = fs::read_to_string(&expected_output_path).unwrap();
         assert_eq!(output, expected);
 
         // THIS WILL BECOME VERY TEDIOUS AND UNSTABLE !!!
-        fs::remove_file(args.output_path).unwrap();
+        fs::remove_file(&output_path).unwrap();
     }
 }
