@@ -1,0 +1,41 @@
+// syntax = "proto3";
+// package payments;
+
+// service Bitcoin {
+//     rpc SendPayment (BTCPaymentRequest) returns (BTCPaymentResponse);
+// }
+
+// message BTCPaymentRequest {
+//     string from_addr = 1;
+//     string to_addr   = 2;
+//     uint32 amount   = 3;
+// }
+
+// message BTCPaymentResponse {
+//     bool   successful = 1;
+//     string message    = 2;
+// }
+
+syntax = "proto3";
+package r2d2;
+
+service R2D2 {
+    rpc Ready(ReadyRequest) returns (ReadyResponse);
+    rpc Done(DoneRequest) returns (DoneResponse);
+}
+
+
+message ReadyRequest {
+}
+
+message ReadyResponse {
+    bool start = 1;
+}
+
+message DoneRequest {
+}
+
+message DoneResponse {
+    bool terminate = 1;
+}
+

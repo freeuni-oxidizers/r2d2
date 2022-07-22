@@ -1,12 +1,12 @@
 [workspace]
 
 members = [
-	"serde-fp",
-	"rdd-sample",
+	"etc/serde-fp",
+	"etc/rdd-sample",
 	"runner",
 	"tester",
 	"tester/it_works",
 	"tester/master_w_single_worker",
-	"master",
-	"worker",
+	"etc/grpc-test",
+	"R2D2"
 ]

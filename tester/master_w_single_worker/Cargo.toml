@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.0", features = ["derive"] }
 runner = { path = "../../runner" }
-master = { path = "../../master" }
-worker = { path = "../../worker" }
+R2D2 = { path = "../../R2D2" }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }

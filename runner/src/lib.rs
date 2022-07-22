@@ -2,15 +2,11 @@ use std::io;
 use std::process::Command;
 use std::{path::PathBuf, process::ExitStatus};
 
-pub const MASTER_PORT: u16 = 8080;
-pub const RUNNER_PORT: u16 = 8081;
-
 pub fn run(
     code_path: &PathBuf,
     input_path: &PathBuf,
     output_path: &PathBuf,
 ) -> io::Result<ExitStatus> {
-    // TODO(zvikinoza): add master worker support
 
     let p = code_path.to_str().unwrap();
     let input_arg = input_path.to_str().unwrap();
@@ -21,38 +17,12 @@ pub fn run(
 }
 
 pub fn run_wm(code_path: &PathBuf, input_path: &PathBuf, output_path: &PathBuf) {
-    use std::io::Read;
-    use std::net::TcpListener;
-
-    // open tcp conn
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", RUNNER_PORT))
-        .expect("failed to bind master port");
-
-    // run master
     run_master(code_path, input_path, output_path);
 
-    // run woker
     run_worker(code_path, input_path, output_path);
 
-    // wait for task to finish
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                let mut data = [0 as u8; 1024]; //
-                let size = stream
-                    .read(&mut data)
-                    .expect(&format!("runner: failed to receive response from master"));
-                if &data[..size] == b"Done" {
-                    return;
-                }
-            }
-            Err(e) => {
-                println!("Error, runner connection with master: {}", e);
-            }
-        }
-        break;
-    }
-    // return result
+    // wait master to call done gRPC
+    std::thread::sleep(std::time::Duration::from_secs(5));
 }
 
 fn run_worker(code_path: &PathBuf, input_path: &PathBuf, output_path: &PathBuf) {
