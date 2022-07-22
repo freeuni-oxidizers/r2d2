@@ -37,7 +37,7 @@ impl R2d2 for R2D2Service {
 }
 
 pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:59448".parse()?;
+    let addr = "[::1]:59749".parse()?;
     let service = R2D2Service::default();
 
     println!("\n\n\n\nStarting MASTER\n\n\n\n");
