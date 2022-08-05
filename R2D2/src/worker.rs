@@ -1,19 +1,16 @@
 use r2d2::r2d2_client::R2d2Client;
-use r2d2::{DoneRequest, ReadyRequest};
+use r2d2::{ReadyRequest, TaskFinishedRequest};
 
 pub mod r2d2 {
     tonic::include_proto!("r2d2");
 }
 
 pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    let mut client = R2d2Client::connect("http://[::1]:59749").await?;
+    let master_addr = "http://[::1]:59742";
+    let mut client = R2d2Client::connect(master_addr).await?;
 
     let request = tonic::Request::new(ReadyRequest {});
-
     let response = client.ready(request).await?;
-    println!("Response: {:?}", response);
-
     if !response.into_inner().start {
         unimplemented!();
     }
@@ -21,17 +18,17 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub async fn end() -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = R2d2Client::connect("http://[::1]:59749").await?;
+pub async fn task_finished() -> Result<(), Box<dyn std::error::Error>> {
+    let master_addr = "http://[::1]:59742";
+    let mut client = R2d2Client::connect(master_addr).await?;
 
-    let request = tonic::Request::new(DoneRequest {});
-    let response = client.done(request).await?;
-    println!("Response: {:?}", response);
+    let request = tonic::Request::new(TaskFinishedRequest {});
+    let _response = client.task_finished(request).await?;
 
     Ok(())
 }
 
-#[allow(unused)]
-fn main() {
-    unimplemented!();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    start().await
 }

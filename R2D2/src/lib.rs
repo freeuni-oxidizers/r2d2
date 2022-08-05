@@ -1,11 +1,10 @@
 #![allow(non_snake_case)]
 
 use clap::Parser;
-mod master;
-mod worker;
 
-// pub const MASTER_ADDR: &str = "http://[::1]:56345";
-// pub const WORKER_ADDR: &str = "http://[::1]:56346";
+mod master;
+pub mod runner;
+mod worker;
 
 #[derive(Parser, Debug)]
 #[clap(about = "Stiffler")]
@@ -43,5 +42,5 @@ pub async fn initialize() {
 
 /// terminate is only reachable for worker nodes
 pub async fn terminate() {
-    worker::end().await.expect("Failed to end worker");
+    worker::task_finished().await.expect("Failed to end worker");
 }

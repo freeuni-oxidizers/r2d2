@@ -17,6 +17,10 @@ path = "src/master.rs"
 name = "worker"
 path = "src/worker.rs"
 
+[[bin]]
+name = "runner"
+path = "src/runner.rs"
+
 [dependencies]
 clap = { version = "3.0", features = ["derive"] }
 tonic = "0.7"

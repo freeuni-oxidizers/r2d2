@@ -6,6 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+R2D2 = { path = "../R2D2" }
 clap = { version = "3.0", features = ["derive"] }
-runner = { path = "../runner" }
 pretty_assertions = "1"
+actix-rt = "*"
+
+[dev-dependencies]
+tokio-test = "*"

@@ -2,22 +2,28 @@ syntax = "proto3";
 package r2d2;
 
 service R2D2 {
-    rpc Ready(ReadyRequest) returns (ReadyResponse);
-    rpc Done(DoneRequest) returns (DoneResponse);
+    rpc ready(ReadyRequest) returns (ReadyResponse);
+    rpc task_finished(TaskFinishedRequest) returns (TaskFinishedResponse);
 }
 
-
-message ReadyRequest {
-}
-
+message ReadyRequest {}
 message ReadyResponse {
     bool start = 1;
 }
 
-message DoneRequest {
-}
-
-message DoneResponse {
+message TaskFinishedRequest {}
+message TaskFinishedResponse {
     bool terminate = 1;
 }
 
+
+service Runner {
+    rpc master_started(MasterStartedRequest) returns (MasterStartedResponse);
+    rpc job_finished(JobFinishedRequest) returns (JobFinishedResponse);
+}
+
+message MasterStartedRequest {}
+message MasterStartedResponse {}
+
+message JobFinishedRequest {}
+message JobFinishedResponse {}
