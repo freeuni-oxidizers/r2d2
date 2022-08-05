@@ -6,6 +6,9 @@ mod master;
 pub mod runner;
 mod worker;
 
+pub const RUNNER_ADDR: &str = "[::1]:59745";
+pub const MASTER_ADDR: &str = "[::1]:59742";
+
 #[derive(Parser, Debug)]
 #[clap(about = "Stiffler")]
 pub struct Args {

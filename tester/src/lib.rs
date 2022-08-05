@@ -11,6 +11,7 @@ mod tests {
     #[test]
     fn master_w_single_worker() {
         // setup
+        println!("\n\n\n master w single worker \n\n\n");
         let program = PathBuf::from("master_w_single_worker");
         let input_file = program.join("input");
         let output_file = program.join("output");

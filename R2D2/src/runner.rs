@@ -7,6 +7,8 @@ use r2d2::{JobFinishedRequest, JobFinishedResponse};
 use r2d2::{MasterStartedRequest, MasterStartedResponse};
 use tonic::{transport::Server, Request, Response, Status};
 
+use crate::RUNNER_ADDR;
+
 pub mod r2d2 {
     tonic::include_proto!("r2d2");
 }
@@ -53,12 +55,12 @@ impl Runner for RunnerService {
 }
 
 pub async fn run_wm(cfg: Config) {
-    let runner_addr = "[::1]:59745".parse().unwrap();
+    println!("\n\n\n runwm \n\n\n");
     let service = RunnerService::new(cfg.clone());
 
     Server::builder()
         .add_service(RunnerServer::new(service))
-        .serve(runner_addr)
+        .serve(RUNNER_ADDR.parse().unwrap())
         .await
         .expect("Failed to build runner server");
 
