@@ -31,6 +31,7 @@ pub struct Config<'a> {
     pub code_path: &'a str,
     pub input_path: &'a str,
     pub output_path: &'a str,
+    pub n_workers: usize,
 }
 
 #[tonic::async_trait]
@@ -43,7 +44,7 @@ impl Runner for RunnerService {
 
 pub async fn run(cfg: &Config<'_>) {
     run_master(cfg);
-    run_worker(cfg);
+    run_workers(cfg);
 
     let service = RunnerService::new();
     let shutdown = service.shutdown.clone();
@@ -55,20 +56,22 @@ pub async fn run(cfg: &Config<'_>) {
         .expect("Unable to start runner service");
 }
 
-fn run_worker(cfg: &Config) {
-    Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            cfg.code_path,
-            "--",
-            "-i",
-            cfg.input_path,
-            "-o",
-            cfg.output_path,
-        ])
-        .spawn()
-        .expect("failed to start worker");
+fn run_workers(cfg: &Config) {
+    for id in 0..cfg.n_workers {
+        Command::new("cargo")
+            .args([
+                "run",
+                "-p",
+                cfg.code_path,
+                "--",
+                "-i",
+                cfg.input_path,
+                "-o",
+                &format!("{}@{}", cfg.output_path, id),
+            ])
+            .spawn()
+            .expect("failed to start worker");
+    }
 }
 
 fn run_master(cfg: &Config) {
@@ -83,6 +86,8 @@ fn run_master(cfg: &Config) {
             cfg.input_path,
             "-o",
             cfg.output_path,
+            "-n",
+            &cfg.n_workers.to_string(),
         ])
         .spawn()
         .expect("failed to start master");

@@ -5,5 +5,6 @@ members = [
 	"etc/serde-fp",
 	"etc/rdd-sample",
 	"tester",
-	"tester/single_worker"
+	"tester/single_worker",
+	"tester/multiple_workers"
 ]

@@ -4,6 +4,10 @@ use r2d2::Empty;
 use tokio::time::{sleep, Duration};
 use tonic::Request;
 
+// Currently:
+//      Workers are stateless
+//      Only worker -> master communication
+
 pub mod r2d2 {
     tonic::include_proto!("r2d2");
 }
