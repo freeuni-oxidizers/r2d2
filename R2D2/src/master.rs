@@ -1,79 +1,65 @@
 use tonic::{transport::Server, Request, Response, Status};
 
-use r2d2::r2d2_server::{R2d2, R2d2Server};
-use r2d2::{ReadyRequest, ReadyResponse, TaskFinishedRequest, TaskFinishedResponse};
+use r2d2::master_server::{Master, MasterServer};
+use r2d2::{Empty, ReadyResponse, TaskFinishedResponse};
 
 use self::r2d2::runner_client::RunnerClient;
-use self::r2d2::{JobFinishedRequest, MasterStartedRequest};
-
-use crate::MASTER_ADDR;
-use crate::RUNNER_ADDR;
+use crate::{MASTER_ADDR, RUNNER_ADDR};
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 pub mod r2d2 {
     tonic::include_proto!("r2d2");
 }
 
-#[derive(Debug, Default)]
-pub struct R2D2Service {}
+#[derive(Debug)]
+struct MasterService {
+    shutdown: Arc<Notify>,
+}
+
+impl MasterService {
+    fn new() -> Self {
+        Self {
+            shutdown: Arc::new(Notify::new()),
+        }
+    }
+}
 
 #[tonic::async_trait]
-impl R2d2 for R2D2Service {
-    async fn ready(
-        &self,
-        _request: Request<ReadyRequest>,
-    ) -> Result<Response<ReadyResponse>, Status> {
-        let reply = ReadyResponse { start: true };
-        Ok(Response::new(reply))
+impl Master for MasterService {
+    async fn ready(&self, _request: Request<Empty>) -> Result<Response<ReadyResponse>, Status> {
+        Ok(Response::new(ReadyResponse { start: true }))
     }
 
     async fn task_finished(
         &self,
-        _request: Request<TaskFinishedRequest>,
+        _request: Request<Empty>,
     ) -> Result<Response<TaskFinishedResponse>, Status> {
         let reply = TaskFinishedResponse { terminate: true };
-
-        // we can consider job done when task is done since,
-        // we are not yet sharding job as multiple tasks.
+        // only one task for now
         let all_tasks_finished = true;
         if all_tasks_finished {
-            let mut client = RunnerClient::connect(RUNNER_ADDR)
+            let runner_addr = format!("http://{}", RUNNER_ADDR);
+            let _response = RunnerClient::connect(runner_addr)
                 .await
-                .expect("When job finished, failed to connect runner from master");
-
-            let request = Request::new(JobFinishedRequest {});
-            let _response = client.job_finished(request).await?;
+                .expect("Failed to notify 'job finished' to runner")
+                .job_finished(Request::new(Empty {}))
+                .await?;
         }
 
+        self.shutdown.notify_one();
         Ok(Response::new(reply))
     }
 }
 
 pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
-    let service = R2D2Service::default();
+    let service = MasterService::new();
+    let shutdown = service.shutdown.clone();
 
     Server::builder()
-        .add_service(R2d2Server::new(service))
-        .serve(MASTER_ADDR.parse().unwrap())
-        .await?;
-
-    // notify runner that we are running
-    let mut client = RunnerClient::connect(RUNNER_ADDR).await?;
-
-    let request = Request::new(MasterStartedRequest {});
-    let _response = client.master_started(request).await?;
-    println!("master started at {:?}", MASTER_ADDR);
-    Ok(())
-}
-
-#[allow(unused)]
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let service = R2D2Service::default();
-
-    Server::builder()
-        .add_service(R2d2Server::new(service))
-        .serve(MASTER_ADDR.parse().unwrap())
-        .await?;
-
+        .add_service(MasterServer::new(service))
+        .serve_with_shutdown(MASTER_ADDR.parse().unwrap(), shutdown.notified())
+        .await
+        .expect("Unable to start master service");
     Ok(())
 }

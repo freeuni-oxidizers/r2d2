@@ -1,13 +1,13 @@
 #![allow(non_snake_case)]
 
-use clap::Parser;
-
 mod master;
 pub mod runner;
 mod worker;
 
-pub const RUNNER_ADDR: &str = "[::1]:59745";
-pub const MASTER_ADDR: &str = "[::1]:59742";
+use clap::Parser;
+
+pub const RUNNER_ADDR: &str = "[::1]:51116";
+pub const MASTER_ADDR: &str = "[::1]:51117";
 
 #[derive(Parser, Debug)]
 #[clap(about = "Stiffler")]
@@ -16,7 +16,7 @@ pub struct Args {
         short,
         long,
         parse(from_os_str),
-        default_value = "./master_w_single_worker/input"
+        default_value = "./single_worker/input"
     )]
     pub intput_path: std::path::PathBuf,
 
@@ -24,7 +24,7 @@ pub struct Args {
         short,
         long,
         parse(from_os_str),
-        default_value = "./master_w_single_worker/output"
+        default_value = "./single_worker/output"
     )]
     pub output_path: std::path::PathBuf,
 
@@ -45,5 +45,7 @@ pub async fn initialize() {
 
 /// terminate is only reachable for worker nodes
 pub async fn terminate() {
-    worker::task_finished().await.expect("Failed to end worker");
+    match worker::task_finished().await {
+        _ => (),
+    }
 }

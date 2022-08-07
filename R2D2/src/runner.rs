@@ -1,96 +1,89 @@
-use std::path::PathBuf;
 use std::process::Command;
 
 use self::r2d2::runner_server::RunnerServer;
 use r2d2::runner_server::Runner;
-use r2d2::{JobFinishedRequest, JobFinishedResponse};
-use r2d2::{MasterStartedRequest, MasterStartedResponse};
+use r2d2::Empty;
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::RUNNER_ADDR;
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 pub mod r2d2 {
     tonic::include_proto!("r2d2");
 }
 
 #[derive(Debug)]
-pub struct RunnerService {
-    cfg: Config,
+struct RunnerService {
+    shutdown: Arc<Notify>,
 }
 
 impl RunnerService {
-    pub fn new(config: Config) -> Self {
+    pub fn new() -> Self {
         Self {
-            cfg: config.clone(),
+            shutdown: Arc::new(Notify::new()),
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct Config {
-    pub code_path: PathBuf,
-    pub input_path: PathBuf,
-    pub output_path: PathBuf,
+pub struct Config<'a> {
+    pub code_path: &'a str,
+    pub input_path: &'a str,
+    pub output_path: &'a str,
 }
 
 #[tonic::async_trait]
 impl Runner for RunnerService {
-    async fn master_started(
-        &self,
-        _request: Request<MasterStartedRequest>,
-    ) -> Result<Response<MasterStartedResponse>, Status> {
-        run_worker(self.cfg.clone());
-        let response = MasterStartedResponse {};
-        println!("runner got master_started call & worker is started");
-        Ok(Response::new(response))
-    }
-
-    async fn job_finished(
-        &self,
-        _request: Request<JobFinishedRequest>,
-    ) -> Result<Response<JobFinishedResponse>, Status> {
-        let response = JobFinishedResponse {};
-        Ok(Response::new(response))
+    async fn job_finished(&self, _request: Request<Empty>) -> Result<Response<Empty>, Status> {
+        self.shutdown.notify_one();
+        Ok(Response::new(Empty {}))
     }
 }
 
-pub async fn run_wm(cfg: Config) {
-    println!("\n\n\n runwm \n\n\n");
-    let service = RunnerService::new(cfg.clone());
+pub async fn run(cfg: &Config<'_>) {
+    run_master(cfg);
+    run_worker(cfg);
+
+    let service = RunnerService::new();
+    let shutdown = service.shutdown.clone();
 
     Server::builder()
         .add_service(RunnerServer::new(service))
-        .serve(RUNNER_ADDR.parse().unwrap())
+        .serve_with_shutdown(RUNNER_ADDR.parse().unwrap(), shutdown.notified())
         .await
-        .expect("Failed to build runner server");
-
-    run_master(cfg);
-    println!("runner started master");
+        .expect("Unable to start runner service");
 }
 
-fn run_worker(cfg: Config) {
-    let p = cfg.code_path.to_str().unwrap();
-    let input_arg = cfg.input_path.to_str().unwrap();
-    let output_arg = cfg.output_path.to_str().unwrap();
+fn run_worker(cfg: &Config) {
     Command::new("cargo")
-        .args(["run", "-p", p, "--", "-i", input_arg, "-o", output_arg])
+        .args([
+            "run",
+            "-p",
+            cfg.code_path,
+            "--",
+            "-i",
+            cfg.input_path,
+            "-o",
+            cfg.output_path,
+        ])
         .spawn()
         .expect("failed to start worker");
 }
 
-fn run_master(cfg: Config) {
-    let p = cfg.code_path.to_str().unwrap();
-    let input_arg = cfg.input_path.to_str().unwrap();
-    let output_arg = cfg.output_path.to_str().unwrap();
+fn run_master(cfg: &Config) {
     Command::new("cargo")
         .args([
-            "run", "-p", p, "--", "--master", "-i", input_arg, "-o", output_arg,
+            "run",
+            "-p",
+            cfg.code_path,
+            "--",
+            "--master",
+            "-i",
+            cfg.input_path,
+            "-o",
+            cfg.output_path,
         ])
         .spawn()
         .expect("failed to start master");
-}
-
-#[allow(unused)]
-fn main() {
-    unimplemented!();
 }
