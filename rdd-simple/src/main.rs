@@ -1,81 +1,73 @@
 mod rdd_id;
-use std::{
-    any::Any,
-    borrow::{Borrow, BorrowMut},
-    cell::RefCell,
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{any::Any, collections::HashMap, marker::PhantomData};
 
-use rdd_id::{new_rdd_id, RddId};
+use rdd_id::RddId;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Point {
-    x: i32,
-    y: i32,
+trait Data: Serialize + DeserializeOwned + 'static {}
+
+impl<T> Data for T where T: Serialize + DeserializeOwned + 'static {}
+
+#[derive(Default)]
+struct ResultCache {
+    data: HashMap<RddId, Box<dyn Any>>,
 }
 
-// TODO: do we need Clone here
-trait Data: Serialize + DeserializeOwned + Clone + 'static {}
+impl ResultCache {
+    pub fn has(&self, id: RddId) -> bool {
+        self.data.contains_key(&id)
+    }
 
-impl<T> Data for T where T: Serialize + DeserializeOwned + Clone + 'static {}
+    pub fn put(&mut self, id: RddId, data: Box<dyn Any>) {
+        self.data.insert(id, data);
+    }
+
+    pub fn get_as<T: Data>(&self, rdd: RddIndex<T>) -> Option<&[T]> {
+        self.data
+            .get(&rdd.id)
+            .map(|b| b.downcast_ref::<Vec<T>>().unwrap().as_slice())
+    }
+}
 
 /// methods independent of `Item` type
-trait RddBase {
-    /// this function is intended to be called from context
-    /// it will ask context for input data and call context
-    /// to put results back
-    fn work(&self, data_deps: Vec<&dyn Any>) -> Box<dyn Any>;
+trait RddBase: serde_traitobject::Serialize + serde_traitobject::Deserialize {
+    /// This expects that all the deps have already been put inside the cache
+    /// Ownership of results is passed back to context!
+    fn work(&self, cache: &ResultCache) -> Box<dyn Any>;
+
+    // TODO: maybe api like this possible
+    // fn work2(&self, ctx: &SparkContext) -> Box<dyn Any>;
 
     /// serialize data returned by this rdd in a form which can be sent over the network
-    fn serialize_raw_data(&self, raw_data: *const ()) -> String;
-    /// deserialize data in a way which can be ingested by work
+    fn serialize_raw_data(&self, raw_data: &dyn Any) -> String;
+    /// deserialize data in a way which can be ingested into following rdds
     fn deserialize_raw_data(&self, serialized_data: String) -> *const ();
 
-    /// Fetch unique id for this id
+    /// Fetch unique id for this rdd
     fn id(&self) -> RddId;
 
+    /// rdd dependencies
     fn deps(&self) -> Vec<RddId>;
 }
 
 /// methods for Rdd which are dependent on `Item` type
-trait Rdd: RddBase {
-    type Item: Data;
-    type Ctx: Context;
+// TODO: do we need this???
+// trait Rdd: RddBase {
+//     type Item: Data;
+// }
 
-    fn map<U: Data>(
-        &self,
-        f: fn(&Self::Item) -> U,
-    ) -> Rc<MapRdd<fn(&Self::Item) -> U, Rc<Self::Ctx>>> {
-        self.ctx().store_rdd(MapRdd {
-            id: new_rdd_id(),
-            prev: self.id(),
-            map_fn: f,
-            ctx: self.ctx(),
-        })
-    }
-
-    fn ctx(&self) -> Rc<Self::Ctx>;
-}
-
-struct DataRdd<T, C> {
+#[derive(Serialize, Deserialize)]
+struct DataRdd<T> {
     id: RddId,
     data: Vec<T>,
-    ctx: C,
 }
 
-impl<T, C> RddBase for DataRdd<T, Rc<C>>
+impl<T> RddBase for DataRdd<T>
 where
-    T: Data,
-    C: Context,
+    T: Data + Clone,
 {
-    fn work(&self, data_deps: Vec<&dyn Any>) -> Box<dyn Any> {
-        Box::new(self.data.clone())
-    }
-
-    fn serialize_raw_data(&self, raw_data: *const ()) -> String {
+    fn serialize_raw_data(&self, raw_data: &dyn Any) -> String {
         todo!()
     }
 
@@ -90,42 +82,26 @@ where
     fn deps(&self) -> Vec<RddId> {
         vec![]
     }
-}
 
-impl<T, C> Rdd for DataRdd<T, Rc<C>>
-where
-    T: Data,
-    C: Context,
-{
-    type Item = T;
-
-    type Ctx = C;
-
-    fn ctx(&self) -> Rc<Self::Ctx> {
-        self.ctx.clone()
+    fn work(&self, cache: &ResultCache) -> Box<dyn Any> {
+        Box::new(self.data.clone())
     }
 }
 
-struct MapRdd<F, C> {
+#[derive(Serialize, Deserialize)]
+struct MapRdd<T, U> {
     id: RddId,
-    prev: RddId,
-    map_fn: F,
-    ctx: C,
+    prev: RddIndex<T>,
+    #[serde(with = "serde_fp")]
+    map_fn: fn(&T) -> U,
 }
 
-impl<T, U, C> RddBase for MapRdd<fn(&T) -> U, Rc<C>>
+impl<T, U> RddBase for MapRdd<T, U>
 where
     T: Data,
     U: Data,
-    C: Context,
 {
-    fn work(&self, data_deps: Vec<&dyn Any>) -> Box<dyn Any> {
-        let v = data_deps[0].downcast_ref::<Vec<T>>().unwrap();
-        let g: Vec<U> = v.iter().map(self.map_fn).collect();
-        Box::new(g)
-    }
-
-    fn serialize_raw_data(&self, raw_data: *const ()) -> String {
+    fn serialize_raw_data(&self, raw_data: &dyn Any) -> String {
         todo!()
     }
 
@@ -138,107 +114,124 @@ where
     }
 
     fn deps(&self) -> Vec<RddId> {
-        vec![self.prev]
+        vec![self.prev.id]
+    }
+
+    fn work(&self, cache: &ResultCache) -> Box<dyn Any> {
+        let v = cache.get_as(self.prev).unwrap();
+        let g: Vec<U> = v.iter().map(self.map_fn).collect();
+        Box::new(g)
     }
 }
 
-impl<T, U, C> Rdd for MapRdd<fn(&T) -> U, Rc<C>>
-where
-    T: Data,
-    U: Data,
-    C: Context,
-{
-    type Item = T;
+// TODO: maybe add uuid so that we can't pass one rdd index to another context
+#[derive(Serialize, Deserialize)]
+struct RddIndex<T> {
+    pub id: RddId,
+    #[serde(skip)]
+    _data: PhantomData<T>,
+}
 
-    type Ctx = C;
-
-    fn ctx(&self) -> Rc<Self::Ctx> {
-        self.ctx.clone()
+impl<T> Clone for RddIndex<T> {
+    fn clone(&self) -> RddIndex<T> {
+        RddIndex {
+            id: self.id,
+            _data: PhantomData::default(),
+        }
     }
 }
+
+impl<T> Copy for RddIndex<T> {}
 
 /// All these methods use interior mutability to keep state
 trait Context: 'static {
-    fn resolve(&self, id: RddId);
-    fn get_data_of_id(&mut self, id: RddId) -> &dyn Any;
-    fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T>;
-    fn receive_serialized(&self, id: RddId, serialized_data: String);
-    // fn new_from_list<T: Data>(self, data: Vec<T>) -> Rc<DataRdd<T, Rc<Self>>>
-    // where
-    //     Self: Sized;
+    // fn resolve<T: Data>(&mut self, rdd: RddIndex<T>);
+    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T];
+    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U>;
+    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>) -> RddIndex<T>;
+
+    // fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T>;
+    // fn receive_serialized(&self, id: RddId, serialized_data: String);
 }
 
-#[derive(Default)]
+// TODO: can't easily have custom deserialization for hashmap value sadge :(
+#[derive(Serialize, Deserialize)]
+struct RddHolder(#[serde(with = "serde_traitobject")] Box<dyn RddBase>);
+
+#[derive(Default, Serialize, Deserialize)]
 struct SparkContext {
-    rdds: RefCell<HashMap<RddId, Rc<dyn RddBase>>>,
+    /// All the rdd's are stored in the context in here
+    rdds: HashMap<RddId, RddHolder>,
     /// this field is basically storing Vec<T>s where T can be different for each id we are not
     /// doing Vec<Any> for perf reasons. downcasting is not free
-    data: RefCell<HashMap<RddId, Box<dyn Any>>>,
+    /// This should not be serialized because all workers have this is just a cache
+    #[serde(skip)]
+    cache: ResultCache,
 }
 
 impl SparkContext {
     fn new() -> Self {
         Self::default()
     }
+
+    /// TODO: proper error handling
+    fn resolve(&mut self, id: RddId) {
+        assert!(self.rdds.contains_key(&id), "id not found in context");
+        if self.cache.has(id) {
+            return;
+        }
+        // First resolve all the deps
+        for dep in self.rdds.get(&id).unwrap().0.deps() {
+            self.resolve(dep);
+        }
+        let res = self.rdds.get(&id).unwrap().0.work(&self.cache);
+        self.cache.put(id, res);
+    }
+
+    fn store_new_rdd<R: RddBase + 'static>(&mut self, rdd: R) {
+        self.rdds.insert(rdd.id(), RddHolder(Box::new(rdd)));
+    }
 }
 
 impl Context for SparkContext {
-    fn resolve(&self, id: RddId) {
-        {
-            for dep in self.rdds.borrow().get(&id).unwrap().deps() {
-                self.resolve(dep);
-            }
+    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T] {
+        self.resolve(rdd.id);
+        self.cache.get_as(rdd).unwrap()
+    }
+
+    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U> {
+        let id = RddId::new();
+        self.store_new_rdd(MapRdd {
+            id,
+            prev: rdd,
+            map_fn: f,
+        });
+        RddIndex {
+            id,
+            _data: PhantomData::default(),
         }
-        let mut data = self.data.borrow_mut();
-        let mut data_deps = Vec::new();
-        {
-            for dep in self.rdds.borrow().get(&id).unwrap().deps() {
-                data_deps.push(data.get(&dep).unwrap().as_ref());
-            }
+    }
+
+    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>) -> RddIndex<T> {
+        let id = RddId::new();
+        self.store_new_rdd(DataRdd { id, data });
+        RddIndex {
+            id,
+            _data: PhantomData::default(),
         }
-        let res = self.rdds.borrow().get(&id).unwrap().work(data_deps);
-        data.insert(id, res);
     }
-
-    fn get_data_of_id(&mut self, id: RddId) -> &dyn Any {
-        self.resolve(id);
-        self.data.get_mut().get(&id).unwrap()
-    }
-
-    /// since we want SparkContext to be the owner of our rdd's we must pass them as 'static and
-    /// move them inside the hashmap
-    fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T> {
-        // TODO: figure out a way to store rdd as Box<dyn RddBase> but return value as &T
-        let mut inner = self.rdds.borrow_mut();
-        let k = Rc::new(rdd);
-        inner.insert(k.id(), k.clone());
-        k
-    }
-
-    fn receive_serialized(&self, id: RddId, serialized_data: String) {
-        unimplemented!();
-    }
-
-    // fn new_from_list<T: Data>(self, data: Vec<T>) -> Rc<DataRdd<T, Rc<Self>>>
-    // where
-    //     Self: Sized,
-    // {
-    //     DataRdd { id: new_rdd_id(), data: data, ctx: Rc::new(self) }
-    // }
-
-
 }
 
 fn main() {
-    let sc = Rc::new(SparkContext::new());
+    let mut sc = SparkContext::new();
 
-    let rdd = sc.store_rdd(DataRdd { id: new_rdd_id(), data: vec![1, 2, 3, 4], ctx: sc.clone() });
-    // let rdd = sc.new_from_list(vec![1, 2, 3, 4]);
-    let rdd = rdd.map(|x|2*x);
-    rdd.ctx().resolve(rdd.id);
-    {
-        let data = sc.data.borrow_mut();
-        let res = data.get(&rdd.id).unwrap().downcast_ref::<Vec<i32>>().unwrap();
-        println!("{:?}", res);
-    }
+    let rdd = sc.new_from_list(vec![1, 2, 3, 4]);
+    let r2 = sc.map(rdd, |x| 2 * x);
+    // let d2 = sc.collect(r2);
+    // println!("{:?}", d2);
+    let json = serde_json::to_string_pretty(&sc).unwrap();
+    println!("serialized = {}", &json);
+    let mut sc: SparkContext = serde_json::from_str(&json).unwrap();
+    let res = sc.collect(r2);
+    println!("{:?}", res);
 }

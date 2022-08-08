@@ -67,6 +67,19 @@ fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J }
 fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J, K }
 fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J, K, L }
 
+impl<T, Ret> FunctionPointer for fn(&T) -> Ret {
+    #[inline]
+    fn as_usize(self) -> usize {
+        self as usize
+    }
+
+    #[inline]
+    unsafe fn from_usize(fp: usize) -> Self {
+        transmute(fp)
+    }
+}
+
+
 // #[derive(Serialize, Deserialize)]
 // pub struct SFp<T: FunctionPointer> {
 //     rel_fp: usize,
