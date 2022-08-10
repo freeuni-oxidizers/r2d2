@@ -1,0 +1,21 @@
+syntax = "proto3";
+package r2d2;
+
+message Empty{}
+
+service Master {
+    rpc ready(Empty) returns (ReadyResponse);
+    rpc task_finished(Empty) returns (TaskFinishedResponse);
+}
+
+message ReadyResponse {
+    bool start = 1;
+}
+
+message TaskFinishedResponse {
+    bool terminate = 1;
+}
+
+service Runner {
+    rpc job_finished(Empty) returns (Empty);
+}

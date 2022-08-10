@@ -193,3 +193,7 @@ mod tests {
         assert_eq!((mapper.f)(mapper.d), (mapper_serde.f)(mapper_serde.d));
     }
 }
+<<<<<<< HEAD
+
+=======
+>>>>>>> freeuni-oxidizers-main

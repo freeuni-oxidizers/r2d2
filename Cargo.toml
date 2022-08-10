@@ -1,6 +1,10 @@
 [workspace]
 
 members = [
+	"R2D2",
+	"tester",
+	"tester/single_worker",
+	"tester/multiple_workers"
 	"serde-fp",
 	"rdd-sample",
 	"rdd-simple",
