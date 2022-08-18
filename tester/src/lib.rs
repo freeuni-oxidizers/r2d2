@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    // TODO(zvikinoza): run test in parallel
-    #[test]
+    // #[test]
+    #[allow(dead_code)]
     fn single_worker() {
         tokio_test::block_on(R2D2::runner::run(&R2D2::runner::Config {
             code_path: "single_worker",
@@ -17,7 +17,8 @@ mod tests {
         std::fs::remove_file(&"single_worker/output@0").unwrap();
     }
 
-    #[test]
+    // #[test]
+    #[allow(dead_code)]
     fn multiple_workers() {
         let cfg = &R2D2::runner::Config {
             code_path: "multiple_workers",
@@ -35,5 +36,29 @@ mod tests {
             // cleanup
             std::fs::remove_file(out_fname).unwrap();
         }
+    }
+
+    #[test]
+    fn map_square() {
+        let cfg = &R2D2::runner::Config {
+            code_path: "map_square",
+            input_path: "map_square/input",
+            output_path: "map_square/output",
+            n_workers: 1,
+        };
+        tokio_test::block_on(R2D2::runner::run(cfg));
+
+        let ex_fname = "map_square/expected";
+        let out_fname = "map_square/output";
+
+        let mut expected = std::fs::read_to_string(ex_fname).unwrap();
+        let mut output = std::fs::read_to_string(out_fname).unwrap();
+        // eat all witespaces when comapring
+        output.retain(|c| !c.is_whitespace());
+        expected.retain(|c| !c.is_whitespace());
+
+        assert_eq!(output, expected);
+        // cleanup
+        std::fs::remove_file(out_fname).unwrap();
     }
 }

@@ -3,9 +3,10 @@
 members = [
 	"R2D2",
 	"tester",
-	"tester/single_worker",
-	"tester/multiple_workers"
-	"serde-fp",
-	"rdd-sample",
-	"rdd-simple",
+#	"tester/single_worker",
+#	"tester/multiple_workers",
+	"tester/map_square",
+#	"serde-fp",
+#	"rdd-sample",
+#	"rdd-simple",
 ]

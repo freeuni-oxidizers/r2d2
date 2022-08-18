@@ -79,7 +79,6 @@ impl<T, Ret> FunctionPointer for fn(&T) -> Ret {
     }
 }
 
-
 // #[derive(Serialize, Deserialize)]
 // pub struct SFp<T: FunctionPointer> {
 //     rel_fp: usize,
@@ -193,7 +192,3 @@ mod tests {
         assert_eq!((mapper.f)(mapper.d), (mapper_serde.f)(mapper_serde.d));
     }
 }
-<<<<<<< HEAD
-
-=======
->>>>>>> freeuni-oxidizers-main

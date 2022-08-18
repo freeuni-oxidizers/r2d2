@@ -4,18 +4,39 @@ package r2d2;
 message Empty{}
 
 service Master {
-    rpc ready(Empty) returns (ReadyResponse);
-    rpc task_finished(Empty) returns (TaskFinishedResponse);
+    rpc get_task(GetTaskRequest) returns (Task);
+    rpc task_finished(TaskFinishedRequest) returns (TaskFinishedResponse);
 }
 
-message ReadyResponse {
-    bool start = 1;
+message GetTaskRequest {
+    uint32 id = 1;
+}
+
+enum TaskAction {
+    WAIT = 0;
+    WORK = 1;
+    SHUTDOWN = 2;
+}
+
+message Task {
+    TaskAction action = 1;
+    string context = 2;
+    string rdd = 3;
 }
 
 message TaskFinishedResponse {
-    bool terminate = 1;
+    bool shutdown = 1;
+}
+
+message TaskFinishedRequest {
+    uint32 id = 1;
+    string result = 2;
 }
 
 service Runner {
-    rpc job_finished(Empty) returns (Empty);
+    rpc job_finished(JobFinishedRequest) returns (Empty);
+}
+
+message JobFinishedRequest {
+    string result = 1;
 }
