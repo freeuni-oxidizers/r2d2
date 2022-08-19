@@ -14,6 +14,11 @@ struct ResultCache {
     data: HashMap<RddPartitionId, Box<dyn Any>>,
 }
 
+enum RddType {
+    Narrow,
+    Wide,
+}
+
 impl ResultCache {
     pub fn has(&self, id: RddPartitionId) -> bool {
         self.data.contains_key(&id)
@@ -53,6 +58,8 @@ trait RddBase: serde_traitobject::Serialize + serde_traitobject::Deserialize {
 
     /// rdd dependencies
     fn deps(&self) -> Vec<RddId>;
+
+    fn rdd_type(&self) -> RddType;
 }
 
 /// methods for Rdd which are dependent on `Item` type
@@ -91,6 +98,10 @@ where
     fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any> {
         Box::new(self.data.clone())
     }
+
+    fn rdd_type(&self) -> RddType {
+        RddType::Narrow
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -127,6 +138,10 @@ where
         let v = cache.get_as(self.prev, partition_id).unwrap();
         let g: Vec<U> = v.iter().map(self.map_fn).collect();
         Box::new(g)
+    }
+
+    fn rdd_type(&self) -> RddType {
+        RddType::Narrow
     }
 }
 
@@ -230,7 +245,6 @@ impl Context for SparkContext {
             prev: rdd,
             map_fn: f,
         });
-        // TODO: add rdd in resultcache with partition id and rdd id, not just rdd id.
         RddIndex {
             id,
             _data: PhantomData::default(),
