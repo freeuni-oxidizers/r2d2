@@ -27,21 +27,20 @@ pub struct MasterService {
     shutdown: Arc<Notify>,
     n_running: AtomicU32,
     n_workers: usize,
-    workers: Mutex<Vec<WorkerState>>,
+    workers: Vec<Mutex<WorkerState>>,
 }
 
 impl MasterService {
     pub async fn new(n_workers: u32, tx: &broadcast::Sender<Task>) -> Self {
-        let ms = Self {
+        let mut ms = Self {
             shutdown: Arc::new(Notify::new()),
             n_running: AtomicU32::new(n_workers),
-            workers: Mutex::new(Vec::new()),
+            workers: Vec::new(),
             n_workers: n_workers as usize,
         };
         {
-            let mut lock = ms.workers.lock().await;
             for _ in 0..n_workers {
-                (*lock).push(WorkerState::new(tx.subscribe()));
+                ms.workers.push(Mutex::new(WorkerState::new(tx.subscribe())));
             }
         }
         ms
@@ -60,7 +59,7 @@ impl Master for MasterService {
         // self.workers are immutable.
         // all request.id are distinct and < self.n_workers
         // self.workers[id] are thread safe
-        let task = { self.workers.lock().await[id].rx.try_recv() };
+        let task = { self.workers[id].lock().await.rx.try_recv() };
         // println!("sending woker={} task={:?}", id, task);
         match task {
             Ok(task) => Ok(Response::new(task)),

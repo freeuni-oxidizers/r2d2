@@ -1,6 +1,6 @@
 use crate::r2d2::master_client::MasterClient;
 use crate::r2d2::{GetTaskRequest, Task, TaskAction, TaskFinishedRequest};
-use crate::rdd::{Context, RddIndex, SparkContext};
+use crate::rdd::{Context, RddIndex, SparkContext, RddBase, RddId};
 use crate::MASTER_ADDR;
 use tokio::time::{sleep, Duration};
 use tonic::Request;
@@ -61,6 +61,7 @@ pub async fn start(id: u32) {
         // here response.action must be TaskAction::Work
         let mut sc: SparkContext = serde_json::from_str(&response.context).unwrap();
         // TODO: how does worker know it's i32, convert to T
+        // RddId -> resolve -> serialize from raw 
         let rdd: RddIndex<i32> = serde_json::from_str(&response.rdd)
             .expect("Error: couldn't parse RddIndex from master");
         let result = sc.collect(rdd);
