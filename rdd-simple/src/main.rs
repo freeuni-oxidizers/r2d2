@@ -11,25 +11,24 @@ impl<T> Data for T where T: Serialize + DeserializeOwned + 'static {}
 
 #[derive(Default)]
 struct ResultCache {
-    data: HashMap<RddId, Box<dyn Any>>,
-}
-
-struct partitionId {
-
+    data: HashMap<RddPartitionId, Box<dyn Any>>,
 }
 
 impl ResultCache {
-    pub fn has(&self, id: RddId) -> bool {
+    pub fn has(&self, id: RddPartitionId) -> bool {
         self.data.contains_key(&id)
     }
 
-    pub fn put(&mut self, id: RddId, data: Box<dyn Any>) {
+    pub fn put(&mut self, id: RddPartitionId, data: Box<dyn Any>) {
         self.data.insert(id, data);
     }
 
-    pub fn get_as<T: Data>(&self, rdd: RddIndex<T>) -> Option<&[T]> {
+    pub fn get_as<T: Data>(&self, rdd: RddIndex<T>, partition_id: usize) -> Option<&[T]> {
         self.data
-            .get(&rdd.id)
+            .get(&RddPartitionId {
+                rdd_id: rdd.id,
+                partition_id: partition_id,
+            })
             .map(|b| b.downcast_ref::<Vec<T>>().unwrap().as_slice())
     }
 }
@@ -39,7 +38,7 @@ trait RddBase: serde_traitobject::Serialize + serde_traitobject::Deserialize {
     /// This expects that all the deps have already been put inside the cache
     /// Ownership of results is passed back to context!
     /// For narrow transformations only
-    fn work(&self, cache: &ResultCache, partition_id: int) -> Box<dyn Any>;
+    fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any>;
 
     // TODO: maybe api like this possible
     // fn work2(&self, ctx: &SparkContext) -> Box<dyn Any>;
@@ -65,7 +64,7 @@ trait RddBase: serde_traitobject::Serialize + serde_traitobject::Deserialize {
 #[derive(Serialize, Deserialize)]
 struct DataRdd<T> {
     id: RddId,
-    partitions_num: int,
+    partitions_num: u32,
     data: Vec<T>,
 }
 
@@ -89,7 +88,7 @@ where
         vec![]
     }
 
-    fn work(&self, cache: &ResultCache, partition_id: int) -> Box<dyn Any> {
+    fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any> {
         Box::new(self.data.clone())
     }
 }
@@ -97,7 +96,7 @@ where
 #[derive(Serialize, Deserialize)]
 struct MapRdd<T, U> {
     id: RddId,
-    partitions_num: int,
+    partitions_num: u32,
     prev: RddIndex<T>,
     #[serde(with = "serde_fp")]
     map_fn: fn(&T) -> U,
@@ -124,8 +123,8 @@ where
         vec![self.prev.id]
     }
 
-    fn work(&self, cache: &ResultCache, partition_id: int) -> Box<dyn Any> {
-        let v = cache.get_as(self.prev).unwrap();
+    fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any> {
+        let v = cache.get_as(self.prev, partition_id).unwrap();
         let g: Vec<U> = v.iter().map(self.map_fn).collect();
         Box::new(g)
     }
@@ -135,9 +134,14 @@ where
 #[derive(Serialize, Deserialize)]
 struct RddIndex<T> {
     pub id: RddId,
-    pub partitions_num: int,
     #[serde(skip)]
     _data: PhantomData<T>,
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+struct RddPartitionId {
+    pub rdd_id: RddId,
+    pub partition_id: usize,
 }
 
 impl<T> Clone for RddIndex<T> {
@@ -155,8 +159,13 @@ impl<T> Copy for RddIndex<T> {}
 trait Context: 'static {
     // fn resolve<T: Data>(&mut self, rdd: RddIndex<T>);
     fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T];
-    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U>;
-    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>, partitions_num: int) -> RddIndex<T>;
+    fn map<T: Data, U: Data>(
+        &mut self,
+        rdd: RddIndex<T>,
+        f: fn(&T) -> U,
+        partitions_num: u32,
+    ) -> RddIndex<U>;
+    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>, partitions_num: u32) -> RddIndex<T>;
 
     // fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T>;
     // fn receive_serialized(&self, id: RddId, serialized_data: String);
@@ -183,6 +192,7 @@ impl SparkContext {
     }
 
     /// TODO: proper error handling
+    /// TODO: think if we need different types of resolve for narrow and wide rdd-s
     fn resolve(&mut self, id: RddId) {
         assert!(self.rdds.contains_key(&id), "id not found in context");
         if self.cache.has(id) {
@@ -207,7 +217,12 @@ impl Context for SparkContext {
         self.cache.get_as(rdd).unwrap()
     }
 
-    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U, partitions_num: int) -> RddIndex<U> {
+    fn map<T: Data, U: Data>(
+        &mut self,
+        rdd: RddIndex<T>,
+        f: fn(&T) -> U,
+        partitions_num: u32,
+    ) -> RddIndex<U> {
         let id = RddId::new();
         self.store_new_rdd(MapRdd {
             id,
@@ -215,18 +230,22 @@ impl Context for SparkContext {
             prev: rdd,
             map_fn: f,
         });
+        // TODO: add rdd in resultcache with partition id and rdd id, not just rdd id.
         RddIndex {
             id,
             _data: PhantomData::default(),
         }
     }
 
-    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>, partitions_num: int) -> RddIndex<T> {
+    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>, partitions_num: u32) -> RddIndex<T> {
         let id = RddId::new();
-        self.store_new_rdd(DataRdd { id, partitions_num, data });
-        RddIndex {
+        self.store_new_rdd(DataRdd {
             id,
             partitions_num,
+            data,
+        });
+        RddIndex {
+            id,
             _data: PhantomData::default(),
         }
     }
@@ -236,7 +255,7 @@ fn main() {
     let mut sc = SparkContext::new();
 
     let rdd = sc.new_from_list(vec![1, 2, 3, 4], 4);
-    let r2 = sc.map(rdd, |x| 2 * x);
+    let r2 = sc.map(rdd, |x| 2 * x, 4);
     // let d2 = sc.collect(r2);
     // println!("{:?}", d2);
     let json = serde_json::to_string_pretty(&sc).unwrap();
