@@ -5,9 +5,9 @@ use rdd_id::RddId;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-trait Data: Serialize + DeserializeOwned + 'static {}
+trait Data: Serialize + DeserializeOwned + Clone + 'static {}
 
-impl<T> Data for T where T: Serialize + DeserializeOwned + 'static {}
+impl<T> Data for T where T: Serialize + DeserializeOwned + Clone + 'static {}
 
 #[derive(Default)]
 struct ResultCache {
@@ -183,7 +183,7 @@ impl<T> Copy for RddIndex<T> {}
 /// All these methods use interior mutability to keep state
 trait Context: 'static {
     // fn resolve<T: Data>(&mut self, rdd: RddIndex<T>);
-    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T];
+    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> Vec<T>;
     fn map<T: Data, U: Data>(
         &mut self,
         rdd: RddIndex<T>,
@@ -220,47 +220,48 @@ impl SparkContext {
         Self::default()
     }
 
-    fn resolve(&mut self, id: RddId) {
-        assert!(self.rdds.contains_key(&id), "id not found in context");
-        let rdd = self.rdds.get(&id).unwrap().0;
-        match rdd.rdd_type() {
-            RddType::Narrow => self.resolve_narrow(id),
-            RddType::Wide => self.resolve_wide(id),
-        }
-    }
-
-    fn resolve_narrow(&mut self, id: RddId) {}
-
-    fn resolve_wide(&mut self, id: RddId) {}
+    // fn resolve_wide(&mut self, id: RddPartitionId) {}
 
     /// TODO: proper error handling
     /// TODO: think if we need different types of resolve for narrow and wide rdd-s
-    // fn resolve(&mut self, id: RddId) {
-    //     assert!(self.rdds.contains_key(&id), "id not found in context");
+    fn resolve(&mut self, id: RddPartitionId) {
+        assert!(
+            self.rdds.contains_key(&id.rdd_id),
+            "id not found in context"
+        );
+        if self.cache.has(id) {
+            return;
+        }
 
-    //     let rdd = self.rdds.get(&id).unwrap().0;
-    //     match rdd.rdd_type() {
-    //         RddType::Narrow => {
-    //             for partition_id in 0..rdd.partitions_num() {
-    //                 let id = RddPartitionId {
-    //                     rdd_id: rdd.id(),
-    //                     partition_id,
-    //                 };
-
-    //                 if self.cache.has(id) {
-    //                     continue;
-    //                 }
-    //             }
-    //         }
-    //         RddType::Wide => todo!(),
-    //     };
-    //     // First resolve all the deps
-    //     for dep in self.rdds.get(&id).unwrap().0.deps() {
-    //         self.resolve(dep);
-    //     }
-    //     let res = self.rdds.get(&id).unwrap().0.work(&self.cache);
-    //     self.cache.put(id, res);
-    // }
+        let rdd_type = self.rdds.get(&id.rdd_id).unwrap().0.rdd_type();
+        // First resolve all the deps
+        for dep in self.rdds.get(&id.rdd_id).unwrap().0.deps() {
+            match rdd_type {
+                RddType::Narrow => {
+                    self.resolve(RddPartitionId {
+                        rdd_id: dep,
+                        partition_id: id.partition_id,
+                    });
+                }
+                RddType::Wide => {
+                    let dep_partitions_num = self.rdds.get(&id.rdd_id).unwrap().0.partitions_num();
+                    for partition_id in 0..dep_partitions_num {
+                        self.resolve(RddPartitionId {
+                            rdd_id: dep,
+                            partition_id,
+                        });
+                    }
+                }
+            }
+            let res = self
+                .rdds
+                .get(&id.rdd_id)
+                .unwrap()
+                .0
+                .work(&self.cache, id.partition_id);
+            self.cache.put(id, res);
+        }
+    }
 
     fn store_new_rdd<R: RddBase + 'static>(&mut self, rdd: R) {
         self.rdds.insert(rdd.id(), RddHolder(Box::new(rdd)));
@@ -268,9 +269,20 @@ impl SparkContext {
 }
 
 impl Context for SparkContext {
-    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T] {
-        self.resolve(rdd.id);
-        self.cache.get_as(rdd).unwrap()
+    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> Vec<T> {
+        let mut result: Vec<T> = vec![];
+        let rdd_info = &self.rdds.get(&rdd.id).unwrap().0;
+        let rdd_id = rdd_info.id();
+        let partitions_num = rdd_info.partitions_num();
+        for partition_id in 0..partitions_num {
+            let id = RddPartitionId {
+                rdd_id: rdd_id,
+                partition_id,
+            };
+            self.resolve(id);
+            result.extend(self.cache.get_as(rdd, id.partition_id).unwrap().to_vec());
+        }
+        result
     }
 
     fn map<T: Data, U: Data>(
