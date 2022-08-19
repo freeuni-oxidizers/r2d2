@@ -60,6 +60,8 @@ trait RddBase: serde_traitobject::Serialize + serde_traitobject::Deserialize {
     fn deps(&self) -> Vec<RddId>;
 
     fn rdd_type(&self) -> RddType;
+
+    fn partitions_num(&self) -> usize;
 }
 
 /// methods for Rdd which are dependent on `Item` type
@@ -71,7 +73,7 @@ trait RddBase: serde_traitobject::Serialize + serde_traitobject::Deserialize {
 #[derive(Serialize, Deserialize)]
 struct DataRdd<T> {
     id: RddId,
-    partitions_num: u32,
+    partitions_num: usize,
     data: Vec<T>,
 }
 
@@ -102,12 +104,16 @@ where
     fn rdd_type(&self) -> RddType {
         RddType::Narrow
     }
+
+    fn partitions_num(&self) -> usize {
+        self.partitions_num
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 struct MapRdd<T, U> {
     id: RddId,
-    partitions_num: u32,
+    partitions_num: usize,
     prev: RddIndex<T>,
     #[serde(with = "serde_fp")]
     map_fn: fn(&T) -> U,
@@ -142,6 +148,10 @@ where
 
     fn rdd_type(&self) -> RddType {
         RddType::Narrow
+    }
+
+    fn partitions_num(&self) -> usize {
+        self.partitions_num
     }
 }
 
@@ -178,9 +188,13 @@ trait Context: 'static {
         &mut self,
         rdd: RddIndex<T>,
         f: fn(&T) -> U,
-        partitions_num: u32,
+        partitions_num: usize,
     ) -> RddIndex<U>;
-    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>, partitions_num: u32) -> RddIndex<T>;
+    fn new_from_list<T: Data + Clone>(
+        &mut self,
+        data: Vec<T>,
+        partitions_num: usize,
+    ) -> RddIndex<T>;
 
     // fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T>;
     // fn receive_serialized(&self, id: RddId, serialized_data: String);
@@ -206,20 +220,47 @@ impl SparkContext {
         Self::default()
     }
 
-    /// TODO: proper error handling
-    /// TODO: think if we need different types of resolve for narrow and wide rdd-s
     fn resolve(&mut self, id: RddId) {
         assert!(self.rdds.contains_key(&id), "id not found in context");
-        if self.cache.has(id) {
-            return;
+        let rdd = self.rdds.get(&id).unwrap().0;
+        match rdd.rdd_type() {
+            RddType::Narrow => self.resolve_narrow(id),
+            RddType::Wide => self.resolve_wide(id),
         }
-        // First resolve all the deps
-        for dep in self.rdds.get(&id).unwrap().0.deps() {
-            self.resolve(dep);
-        }
-        let res = self.rdds.get(&id).unwrap().0.work(&self.cache);
-        self.cache.put(id, res);
     }
+
+    fn resolve_narrow(&mut self, id: RddId) {}
+
+    fn resolve_wide(&mut self, id: RddId) {}
+
+    /// TODO: proper error handling
+    /// TODO: think if we need different types of resolve for narrow and wide rdd-s
+    // fn resolve(&mut self, id: RddId) {
+    //     assert!(self.rdds.contains_key(&id), "id not found in context");
+
+    //     let rdd = self.rdds.get(&id).unwrap().0;
+    //     match rdd.rdd_type() {
+    //         RddType::Narrow => {
+    //             for partition_id in 0..rdd.partitions_num() {
+    //                 let id = RddPartitionId {
+    //                     rdd_id: rdd.id(),
+    //                     partition_id,
+    //                 };
+
+    //                 if self.cache.has(id) {
+    //                     continue;
+    //                 }
+    //             }
+    //         }
+    //         RddType::Wide => todo!(),
+    //     };
+    //     // First resolve all the deps
+    //     for dep in self.rdds.get(&id).unwrap().0.deps() {
+    //         self.resolve(dep);
+    //     }
+    //     let res = self.rdds.get(&id).unwrap().0.work(&self.cache);
+    //     self.cache.put(id, res);
+    // }
 
     fn store_new_rdd<R: RddBase + 'static>(&mut self, rdd: R) {
         self.rdds.insert(rdd.id(), RddHolder(Box::new(rdd)));
@@ -236,7 +277,7 @@ impl Context for SparkContext {
         &mut self,
         rdd: RddIndex<T>,
         f: fn(&T) -> U,
-        partitions_num: u32,
+        partitions_num: usize,
     ) -> RddIndex<U> {
         let id = RddId::new();
         self.store_new_rdd(MapRdd {
@@ -251,7 +292,11 @@ impl Context for SparkContext {
         }
     }
 
-    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>, partitions_num: u32) -> RddIndex<T> {
+    fn new_from_list<T: Data + Clone>(
+        &mut self,
+        data: Vec<T>,
+        partitions_num: usize,
+    ) -> RddIndex<T> {
         let id = RddId::new();
         self.store_new_rdd(DataRdd {
             id,
