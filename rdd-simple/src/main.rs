@@ -234,9 +234,10 @@ impl SparkContext {
             match rdd_type {
                 RddType::Narrow => {
                     self.resolve(RddPartitionId {
-                        rdd_id: dep,
-                        partition_id: id.partition_id,
+                        rdd_id: dbg!(dep),
+                        partition_id: dbg!(id.partition_id),
                     });
+                    // print!("{}", id.partition_id)
                 }
                 RddType::Wide => {
                     let dep_partitions_num = self.rdds.get(&id.rdd_id).unwrap().0.partitions_num();
@@ -256,6 +257,13 @@ impl SparkContext {
                 .work(&self.cache, id.partition_id);
             self.cache.put(id, res);
         }
+        let res = self
+            .rdds
+            .get(&id.rdd_id)
+            .unwrap()
+            .0
+            .work(&self.cache, id.partition_id);
+        self.cache.put(id, res);
     }
 
     fn store_new_rdd<R: RddBase + 'static>(&mut self, rdd: R) {
@@ -314,7 +322,7 @@ impl Context for SparkContext {
 }
 
 fn main() {
-    env::set_var("RUST_BACKTRACE", "1");
+    // env::set_var("RUST_BACKTRACE", "1");
     let mut sc = SparkContext::new();
 
     let rdd = sc.new_from_list(vec![1, 2, 3, 4], 4);
