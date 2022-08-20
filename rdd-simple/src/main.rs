@@ -1,5 +1,5 @@
 mod rdd_id;
-use std::{any::Any, collections::HashMap, marker::PhantomData};
+use std::{any::Any, collections::HashMap, env, marker::PhantomData};
 
 use rdd_id::RddId;
 
@@ -184,12 +184,7 @@ impl<T> Copy for RddIndex<T> {}
 trait Context: 'static {
     // fn resolve<T: Data>(&mut self, rdd: RddIndex<T>);
     fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> Vec<T>;
-    fn map<T: Data, U: Data>(
-        &mut self,
-        rdd: RddIndex<T>,
-        f: fn(&T) -> U,
-        partitions_num: usize,
-    ) -> RddIndex<U>;
+    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U>;
     fn new_from_list<T: Data + Clone>(
         &mut self,
         data: Vec<T>,
@@ -285,13 +280,9 @@ impl Context for SparkContext {
         result
     }
 
-    fn map<T: Data, U: Data>(
-        &mut self,
-        rdd: RddIndex<T>,
-        f: fn(&T) -> U,
-        partitions_num: usize,
-    ) -> RddIndex<U> {
+    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U> {
         let id = RddId::new();
+        let partitions_num = self.rdds.get(&rdd.id).unwrap().0.partitions_num();
         self.store_new_rdd(MapRdd {
             id,
             partitions_num,
@@ -323,10 +314,11 @@ impl Context for SparkContext {
 }
 
 fn main() {
+    env::set_var("RUST_BACKTRACE", "1");
     let mut sc = SparkContext::new();
 
     let rdd = sc.new_from_list(vec![1, 2, 3, 4], 4);
-    let r2 = sc.map(rdd, |x| 2 * x, 4);
+    let r2 = sc.map(rdd, |x| 2 * x);
     // let d2 = sc.collect(r2);
     // println!("{:?}", d2);
     let json = serde_json::to_string_pretty(&sc).unwrap();
