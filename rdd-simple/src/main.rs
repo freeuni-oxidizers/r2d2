@@ -74,7 +74,7 @@ trait RddBase: serde_traitobject::Serialize + serde_traitobject::Deserialize {
 struct DataRdd<T> {
     id: RddId,
     partitions_num: usize,
-    data: Vec<T>,
+    data: Vec<Vec<T>>,
 }
 
 impl<T> RddBase for DataRdd<T>
@@ -98,7 +98,7 @@ where
     }
 
     fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any> {
-        Box::new(self.data.clone())
+        Box::new(self.data.get(partition_id).unwrap().clone())
     }
 
     fn rdd_type(&self) -> RddType {
@@ -185,11 +185,7 @@ trait Context: 'static {
     // fn resolve<T: Data>(&mut self, rdd: RddIndex<T>);
     fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> Vec<T>;
     fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U>;
-    fn new_from_list<T: Data + Clone>(
-        &mut self,
-        data: Vec<T>,
-        partitions_num: usize,
-    ) -> RddIndex<T>;
+    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<Vec<T>>) -> RddIndex<T>;
 
     // fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T>;
     // fn receive_serialized(&self, id: RddId, serialized_data: String);
@@ -303,15 +299,11 @@ impl Context for SparkContext {
         }
     }
 
-    fn new_from_list<T: Data + Clone>(
-        &mut self,
-        data: Vec<T>,
-        partitions_num: usize,
-    ) -> RddIndex<T> {
+    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<Vec<T>>) -> RddIndex<T> {
         let id = RddId::new();
         self.store_new_rdd(DataRdd {
             id,
-            partitions_num,
+            partitions_num: data.len(),
             data,
         });
         RddIndex {
@@ -325,7 +317,7 @@ fn main() {
     // env::set_var("RUST_BACKTRACE", "1");
     let mut sc = SparkContext::new();
 
-    let rdd = sc.new_from_list(vec![1, 2, 3, 4], 4);
+    let rdd = sc.new_from_list(vec![vec![1], vec![2], vec![3], vec![4]]);
     let r2 = sc.map(rdd, |x| 2 * x);
     // let d2 = sc.collect(r2);
     // println!("{:?}", d2);
