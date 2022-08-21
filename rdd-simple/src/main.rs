@@ -155,6 +155,50 @@ where
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct FilterRdd<T> {
+    id: RddId,
+    partitions_num: usize,
+    prev: RddIndex<T>,
+    #[serde(with = "serde_fp")]
+    filter_fn: fn(&T) -> bool,
+}
+
+impl<T> RddBase for FilterRdd<T>
+where
+    T: Data,
+{
+    fn serialize_raw_data(&self, raw_data: &dyn Any) -> String {
+        todo!()
+    }
+
+    fn deserialize_raw_data(&self, serialized_data: String) -> *const () {
+        todo!()
+    }
+
+    fn id(&self) -> RddId {
+        self.id
+    }
+
+    fn deps(&self) -> Vec<RddId> {
+        vec![self.prev.id]
+    }
+
+    fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any> {
+        let v = cache.get_as(self.prev, partition_id).unwrap();
+        let g: Vec<T> = v.to_vec().into_iter().filter(self.filter_fn).collect();
+        Box::new(g)
+    }
+
+    fn rdd_type(&self) -> RddType {
+        RddType::Narrow
+    }
+
+    fn partitions_num(&self) -> usize {
+        self.partitions_num
+    }
+}
+
 // TODO: maybe add uuid so that we can't pass one rdd index to another context
 #[derive(Serialize, Deserialize)]
 struct RddIndex<T> {
@@ -185,6 +229,7 @@ trait Context: 'static {
     // fn resolve<T: Data>(&mut self, rdd: RddIndex<T>);
     fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> Vec<T>;
     fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U>;
+    fn filter<T: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> bool) -> RddIndex<T>;
     fn new_from_list<T: Data + Clone>(&mut self, data: Vec<Vec<T>>) -> RddIndex<T>;
 
     // fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T>;
@@ -275,7 +320,7 @@ impl Context for SparkContext {
         let partitions_num = rdd_info.partitions_num();
         for partition_id in 0..partitions_num {
             let id = RddPartitionId {
-                rdd_id: rdd_id,
+                rdd_id,
                 partition_id,
             };
             self.resolve(id);
@@ -292,6 +337,21 @@ impl Context for SparkContext {
             partitions_num,
             prev: rdd,
             map_fn: f,
+        });
+        RddIndex {
+            id,
+            _data: PhantomData::default(),
+        }
+    }
+
+    fn filter<T: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> bool) -> RddIndex<T> {
+        let id = RddId::new();
+        let partitions_num = self.rdds.get(&rdd.id).unwrap().0.partitions_num();
+        self.store_new_rdd(FilterRdd {
+            id,
+            partitions_num,
+            prev: rdd,
+            filter_fn: f,
         });
         RddIndex {
             id,
@@ -317,13 +377,14 @@ fn main() {
     // env::set_var("RUST_BACKTRACE", "1");
     let mut sc = SparkContext::new();
 
-    let rdd = sc.new_from_list(vec![vec![1], vec![2], vec![3], vec![4]]);
-    let r2 = sc.map(rdd, |x| 2 * x);
+    let rdd1 = sc.new_from_list(vec![vec![1], vec![2], vec![3], vec![4]]);
+    let rdd2 = sc.map(rdd1, |x| 2 * x);
+    let rdd3 = sc.filter(rdd2, |&x| x > 5);
     // let d2 = sc.collect(r2);
     // println!("{:?}", d2);
     let json = serde_json::to_string_pretty(&sc).unwrap();
     println!("serialized = {}", &json);
     let mut sc: SparkContext = serde_json::from_str(&json).unwrap();
-    let res = sc.collect(r2);
+    let res = sc.collect(rdd3);
     println!("{:?}", res);
 }
