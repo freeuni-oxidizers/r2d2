@@ -8,4 +8,5 @@ members = [
 	"serde-fp",
 	"rdd-sample",
 	"rdd-simple",
+	"tester/map_square",
 ]
