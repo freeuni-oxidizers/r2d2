@@ -1,19 +1,24 @@
 use crate::r2d2::master_client::MasterClient;
 use crate::r2d2::{GetTaskRequest, Task, TaskAction, TaskFinishedRequest};
-use crate::rdd::{Context, RddIndex, SparkContext, RddBase, RddId};
+use crate::rdd::{Context, RddBase, RddId, RddIndex, SparkContext};
 use crate::MASTER_ADDR;
 use tokio::time::{sleep, Duration};
+use tonic::transport::Channel;
 use tonic::Request;
 
-impl TryFrom<i32> for TaskAction {
-    type Error = i32;
-
-    fn try_from(v: i32) -> Result<Self, Self::Error> {
-        match v {
-            x if x == TaskAction::Wait as i32 => Ok(TaskAction::Wait),
-            x if x == TaskAction::Shutdown as i32 => Ok(TaskAction::Shutdown),
-            x if x == TaskAction::Work as i32 => Ok(TaskAction::Work),
-            _ => Err(v),
+async fn get_master_client(
+    master_addr: String,
+) -> Result<MasterClient<Channel>, tonic::transport::Error> {
+    let mut retries = 3;
+    let mut wait = 100;
+    loop {
+        match MasterClient::connect(master_addr.clone()).await {
+            Err(_) if retries > 0 => {
+                retries -= 1;
+                sleep(Duration::from_millis(wait)).await;
+                wait *= 2;
+            }
+            master_conn => break master_conn,
         }
     }
 }
@@ -23,53 +28,42 @@ impl TryFrom<i32> for TaskAction {
 ///  PROCESS EXITS
 pub async fn start(id: u32) {
     // master may not be running yet
-    // println!("worker {} starting", id);
-    let mut retries = 3;
-    let mut wait = 100;
-    let master_conn = loop {
-        let master_addr = format!("http://{}", MASTER_ADDR);
-        match MasterClient::connect(master_addr).await {
-            Err(_) if retries > 0 => {
-                retries -= 1;
-                sleep(Duration::from_millis(wait)).await;
-                wait *= 2;
-            }
-            master_conn => break master_conn,
-        }
-    };
-    let master_conn = &mut master_conn.expect("Error: worker couldn't connect to master");
+    println!("Worker #{id} starting");
+    let mut master_conn = get_master_client(format!("http://{}", MASTER_ADDR))
+        .await
+        .expect("Worker couldn't connect to master");
     loop {
-        let response: Task = master_conn
+        let task: Task = master_conn
             .get_task(Request::new(GetTaskRequest { id }))
             .await
-            .expect("Error: worker didn't get rpc response from master")
+            .expect("Worker didn't get rpc response from master")
             .into_inner();
-        // println!("worker={} got task={:?}", id, response);
-        match response.action.try_into() {
-            Ok(TaskAction::Shutdown) => {
+        println!("Worker #{id} got task={task:?}");
+        match TaskAction::from_i32(task.action) {
+            Some(TaskAction::Shutdown) => {
                 break;
             }
-            Ok(TaskAction::Wait) => {
+            Some(TaskAction::Wait) => {
                 tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                 continue;
             }
-            Ok(TaskAction::Work) => {}
-            Err(e) => {
-                panic!("Worker got weird `TaskAction`: {:?}", e);
+            Some(TaskAction::Work) => {}
+            None => {
+                panic!("Worker got bad `TaskAction`: {:?}", task.action);
             }
         }
-        // here response.action must be TaskAction::Work
-        let mut sc: SparkContext = serde_json::from_str(&response.context).unwrap();
+        // Here response.action must be TaskAction::Work
+        let mut sc: SparkContext = serde_json::from_str(&task.context).unwrap();
         // TODO: how does worker know it's i32, convert to T
-        // RddId -> resolve -> serialize from raw 
-        let rdd: RddIndex<i32> = serde_json::from_str(&response.rdd)
-            .expect("Error: couldn't parse RddIndex from master");
+        // RddId -> resolve -> serialize from raw
+        let rdd: RddIndex<i32> =
+            serde_json::from_str(&task.rdd).expect("Error: couldn't parse RddIndex from master");
         let result = sc.collect(rdd);
         let result = TaskFinishedRequest {
             result: serde_json::to_string_pretty(result).unwrap(),
             id,
         };
-        // println!("worker={} got result={:?}", id, result);
+        println!("worker={} got result={:?}", id, result);
         let response = master_conn
             .task_finished(Request::new(result))
             .await
@@ -79,7 +73,7 @@ pub async fn start(id: u32) {
             break;
         }
     }
-    println!("\n\nwoker={} shutting down\n\n", id);
+    println!("\n\nWoker #{id} shutting down\n\n");
     std::process::exit(0);
 }
 

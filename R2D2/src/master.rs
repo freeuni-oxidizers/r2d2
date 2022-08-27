@@ -83,17 +83,17 @@ impl Master for MasterService {
         let request = request.into_inner();
         // println!("master: from worker={} got result={:?}", request.id, request.result);
         if job_finished {
-            // pass results to runner 
-            // when more workers, then aggregate results
-            let results = Request::new(JobFinishedRequest {
-                result: request.result,
-            });
-            let runner_addr = format!("http://{}", RUNNER_ADDR);
-            RunnerClient::connect(runner_addr)
-                .await
-                .expect("Failed to notify 'job finished' to runner")
-                .job_finished(results)
-                .await?;
+            // // pass results to runner 
+            // // when more workers, then aggregate results
+            // let results = Request::new(JobFinishedRequest {
+            //     result: request.result,
+            // });
+            // let runner_addr = format!("http://{}", RUNNER_ADDR);
+            // RunnerClient::connect(runner_addr)
+            //     .await
+            //     .expect("Failed to notify 'job finished' to runner")
+            //     .job_finished(results)
+            //     .await?;
 
             self.shutdown.notify_one();
         }

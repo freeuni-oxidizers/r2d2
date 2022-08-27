@@ -6,7 +6,6 @@ members = [
 	"tester/single_worker",
 	"tester/multiple_workers",
 	"serde-fp",
-	"rdd-sample",
 	"rdd-simple",
 	"tester/map_square",
 ]

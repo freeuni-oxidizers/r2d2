@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::Config;
 use crate::{master, worker};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
 #[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct RddId(usize);
 use crate::r2d2::{Task, TaskAction};
