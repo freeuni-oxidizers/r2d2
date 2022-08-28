@@ -1,6 +1,8 @@
 use crate::r2d2::master_client::MasterClient;
 use crate::r2d2::{GetTaskRequest, Task, TaskAction, TaskFinishedRequest};
-use crate::rdd::{Context, RddBase, RddId, RddIndex, SparkContext};
+use crate::rdd::executor::Executor;
+use crate::rdd::graph::Graph;
+use crate::rdd::rdd::{RddId, RddPartitionId};
 use crate::MASTER_ADDR;
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;
@@ -53,22 +55,28 @@ pub async fn start(id: u32) {
             }
         }
         // Here response.action must be TaskAction::Work
-        let mut sc: SparkContext = serde_json::from_str(&task.context).unwrap();
-        // TODO: how does worker know it's i32, convert to T
-        // RddId -> resolve -> serialize from raw
-        let rdd: RddIndex<i32> =
-            serde_json::from_str(&task.rdd).expect("Error: couldn't parse RddIndex from master");
-        let result = sc.collect(rdd);
-        let result = TaskFinishedRequest {
-            result: serde_json::to_string_pretty(result).unwrap(),
-            id,
-        };
+        let graph: Graph = serde_json::from_str(&task.graph).unwrap();
+        let target: RddId = serde_json::from_str(&task.rdd).unwrap();
+        let mut executor = Executor::new();
+        executor.resolve(&graph, RddPartitionId {
+            rdd_id: target,
+            partition_id: task.partition_id as usize,
+        });
+        let result = graph.get_rdd(target).unwrap().serialize_raw_data(
+            executor
+                .cache
+                .get_as_any(target, task.partition_id as usize)
+                .unwrap(),
+        );
+
+        let result = TaskFinishedRequest { result, id };
         println!("worker={} got result={:?}", id, result);
         let response = master_conn
             .task_finished(Request::new(result))
             .await
             .unwrap()
             .into_inner();
+
         if response.shutdown {
             break;
         }

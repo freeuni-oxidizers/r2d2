@@ -20,8 +20,9 @@ enum TaskAction {
 
 message Task {
     TaskAction action = 1;
-    string context = 2;
+    string graph = 2;
     string rdd = 3;
+    uint32 partition_id = 4;
 }
 
 message TaskFinishedResponse {
@@ -30,7 +31,7 @@ message TaskFinishedResponse {
 
 message TaskFinishedRequest {
     uint32 id = 1;
-    string result = 2;
+    bytes result = 2;
 }
 
 service Runner {

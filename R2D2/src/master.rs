@@ -65,8 +65,9 @@ impl Master for MasterService {
             Ok(task) => Ok(Response::new(task)),
             Err(_) => Ok(Response::new(Task {
                 action: TaskAction::Wait as i32,
-                context: "".to_string(),
-                rdd: "".to_string(),
+                graph: Default::default(),
+                rdd: Default::default(),
+                partition_id: Default::default(),
             })),
         }
     }

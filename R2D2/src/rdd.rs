@@ -31,7 +31,7 @@ pub mod rdd {
     }
 
     impl<T> RddIndex<T> {
-        fn new(id: RddId) -> Self {
+        pub fn new(id: RddId) -> Self {
             RddIndex {
                 id,
                 _data: PhantomData::default(),
@@ -72,7 +72,7 @@ pub mod rdd {
     //     fn post_result<T>(&mut self, idx: RddIndex<T>, partition_id: usize, data: Vec<T>);
     // }
 
-    enum RddType {
+    pub enum RddType {
         Narrow,
         Wide,
     }
@@ -148,9 +148,9 @@ pub mod rdd {
 
         #[derive(Serialize, Deserialize)]
         pub struct DataRdd<T> {
-            id: RddId,
-            partitions_num: usize,
-            data: Vec<Vec<T>>,
+            pub id: RddId,
+            pub partitions_num: usize,
+            pub data: Vec<Vec<T>>,
         }
 
         impl<T> TypedRdd for DataRdd<T>
@@ -160,7 +160,7 @@ pub mod rdd {
             type Item = T;
 
             fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item> {
-                self.data[partition_id]
+                self.data[partition_id].clone()
             }
         }
 
@@ -194,13 +194,14 @@ pub mod rdd {
 
         use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd};
 
+        // TODO: maybe no pub?
         #[derive(Serialize, Deserialize)]
         pub struct MapRdd<T, U> {
-            id: RddId,
-            prev: RddIndex<T>,
-            partitions_num: usize,
+            pub id: RddId,
+            pub prev: RddIndex<T>,
+            pub partitions_num: usize,
             #[serde(with = "serde_fp")]
-            map_fn: fn(&T) -> U,
+            pub map_fn: fn(&T) -> U,
         }
 
         impl<T, U> TypedRdd for MapRdd<T, U>
@@ -246,12 +247,12 @@ pub mod rdd {
         use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd};
 
         #[derive(Serialize, Deserialize)]
-        struct FilterRdd<T> {
-            id: RddId,
-            partitions_num: usize,
-            prev: RddIndex<T>,
+        pub struct FilterRdd<T> {
+            pub id: RddId,
+            pub partitions_num: usize,
+            pub prev: RddIndex<T>,
             #[serde(with = "serde_fp")]
-            filter_fn: fn(&T) -> bool,
+            pub filter_fn: fn(&T) -> bool,
         }
 
         impl<T> TypedRdd for FilterRdd<T>
@@ -297,8 +298,7 @@ pub mod rdd {
 mod cache {
     use std::{any::Any, collections::HashMap};
 
-    use super::rdd::{Data, RddIndex, RddPartitionId};
-    
+    use super::rdd::{Data, RddId, RddIndex, RddPartitionId};
 
     #[derive(Default)]
     pub struct ResultCache {
@@ -322,18 +322,16 @@ mod cache {
                 })
                 .map(|b| b.downcast_ref::<Vec<T>>().unwrap().as_slice())
         }
+
+        pub fn get_as_any(&self, rdd_id: RddId, partition_id: usize) -> Option<&dyn Any> {
+            self.data
+                .get(&RddPartitionId {
+                    rdd_id,
+                    partition_id,
+                })
+                .map(|b| b.as_ref())
+        }
     }
-}
-
-/// All these methods use interior mutability to keep state
-pub trait Context: 'static {
-    // fn resolve<T: Data>(&mut self, rdd: RddIndex<T>);
-    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T];
-    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U>;
-    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>) -> RddIndex<T>;
-
-    // fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T>;
-    // fn receive_serialized(&self, id: RddId, serialized_data: String);
 }
 
 pub mod graph {
@@ -345,154 +343,302 @@ pub mod graph {
 
     // TODO: can't easily have custom deserialization for hashmap value sadge :(
     #[derive(Serialize, Deserialize)]
-    pub struct RddHolder(#[serde(with = "serde_traitobject")] Box<dyn RddBase>);
+    struct RddHolder(#[serde(with = "serde_traitobject")] Box<dyn RddBase>);
 
     #[derive(Default, Serialize, Deserialize)]
     pub struct Graph {
         /// All the rdd's are stored in the context in here
         rdds: HashMap<RddId, RddHolder>,
-        // /// this field is basically storing Vec<T>s where T can be different for each id we are not
-        // /// doing Vec<Any> for perf reasons. downcasting is not free
-        // /// This should not be serialized because all workers have this is just a cache
         // #[serde(skip)]
         // cache: ResultCache,
     }
-}
 
-// TODO(zvikinoza): extract appropriate fn s to Spark
-impl SparkContext {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// TODO: proper error handling
-    fn resolve(&mut self, id: RddId) {
-        assert!(self.rdds.contains_key(&id), "id not found in context");
-        if self.cache.has(id) {
-            return;
+    impl Graph {
+        pub fn store_new_rdd<R: RddBase + 'static>(&mut self, rdd: R) {
+            self.rdds.insert(rdd.id(), RddHolder(Box::new(rdd)));
         }
-        // First resolve all the deps
-        for dep in self.rdds.get(&id).unwrap().0.deps() {
-            self.resolve(dep);
+
+        pub fn get_rdd(&self, id: RddId) -> Option<&dyn RddBase> {
+            self.rdds.get(&id).map(|x| x.0.as_ref())
         }
-        let res = self.rdds.get(&id).unwrap().0.work(&self.cache);
-        self.cache.put(id, res);
-    }
 
-    fn store_new_rdd<R: RddBase + 'static>(&mut self, rdd: R) {
-        self.rdds.insert(rdd.id(), RddHolder(Box::new(rdd)));
-    }
-}
-
-impl Context for SparkContext {
-    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T] {
-        self.resolve(rdd.id);
-        self.cache.get_as(rdd).unwrap()
-    }
-
-    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U> {
-        let id = RddId::new();
-        self.store_new_rdd(MapRdd {
-            id,
-            prev: rdd,
-            map_fn: f,
-        });
-        RddIndex {
-            id,
-            _data: PhantomData::default(),
-        }
-    }
-
-    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>) -> RddIndex<T> {
-        let id = RddId::new();
-        self.store_new_rdd(DataRdd { id, data });
-        RddIndex {
-            id,
-            _data: PhantomData::default(),
+        pub fn contains(&self, id: RddId) -> bool {
+            self.rdds.contains_key(&id)
         }
     }
 }
+
+pub mod context {
+    use super::rdd::{Data, RddIndex};
+
+    /// All these methods use interior mutability to keep state
+    pub trait Context {
+        // fn resolve<T: Data>(&mut self, rdd: RddIndex<T>);
+        fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> Vec<T>;
+        fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U>;
+        fn filter<T: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> bool) -> RddIndex<T>;
+        fn new_from_list<T: Data + Clone>(&mut self, data: Vec<Vec<T>>) -> RddIndex<T>;
+
+        // fn store_rdd<T: RddBase + 'static>(&self, rdd: T) -> Rc<T>;
+        // fn receive_serialized(&self, id: RddId, serialized_data: String);
+    }
+}
+
+// // TODO(zvikinoza): extract appropriate fn s to Spark
+// impl SparkContext {
+//     pub fn new() -> Self {
+//         Self::default()
+//     }
+//
+//     /// TODO: proper error handling
+//     fn resolve(&mut self, id: RddId) {
+//         assert!(self.rdds.contains_key(&id), "id not found in context");
+//         if self.cache.has(id) {
+//             return;
+//         }
+//         // First resolve all the deps
+//         for dep in self.rdds.get(&id).unwrap().0.deps() {
+//             self.resolve(dep);
+//         }
+//         let res = self.rdds.get(&id).unwrap().0.work(&self.cache);
+//         self.cache.put(id, res);
+//     }
+//
+//     fn store_new_rdd<R: RddBase + 'static>(&mut self, rdd: R) {
+//         self.rdds.insert(rdd.id(), RddHolder(Box::new(rdd)));
+//     }
+// }
+//
+// impl Context for SparkContext {
+//     fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T] {
+//         self.resolve(rdd.id);
+//         self.cache.get_as(rdd).unwrap()
+//     }
+//
+//     fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U> {
+//         let id = RddId::new();
+//         self.store_new_rdd(MapRdd {
+//             id,
+//             prev: rdd,
+//             map_fn: f,
+//         });
+//         RddIndex {
+//             id,
+//             _data: PhantomData::default(),
+//         }
+//     }
+//
+//     fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>) -> RddIndex<T> {
+//         let id = RddId::new();
+//         self.store_new_rdd(DataRdd { id, data });
+//         RddIndex {
+//             id,
+//             _data: PhantomData::default(),
+//         }
+//     }
+// }
 
 struct RddDag {}
 
-mod executor {
+pub mod executor {
+    use crate::rdd::rdd::RddType;
+
+    use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId};
+
     pub struct Executor {
-        /// Graph for the current Execution
-        current_graph: Option<Graph>,
+        // /// Graph for the current Execution
+        // pub graph: Graph,
         /// Cache which stores full partitions ready for next rdd
-        cache: ResultCache,
+        pub cache: ResultCache,
         /// Cache which is used to store partial results of shuffle operations
-        takeout: ResultCache,
+        pub takeout: ResultCache,
+    }
+
+    impl Executor {
+        pub fn new() -> Self {
+            Self {
+                cache: ResultCache::default(),
+                takeout: ResultCache::default(),
+            }
+        }
+        pub fn resolve(&mut self, graph: &Graph, id: RddPartitionId) {
+            assert!(graph.contains(id.rdd_id), "id not found in context");
+            if self.cache.has(id) {
+                return;
+            }
+
+            let rdd_type = graph.get_rdd(id.rdd_id).unwrap().rdd_type();
+            // First resolve all the deps
+            for dep in graph.get_rdd(id.rdd_id).unwrap().deps() {
+                match rdd_type {
+                    RddType::Narrow => {
+                        self.resolve(
+                            graph,
+                            RddPartitionId {
+                                rdd_id: dbg!(dep),
+                                partition_id: dbg!(id.partition_id),
+                            },
+                        );
+                        // print!("{}", id.partition_id)
+                    }
+                    RddType::Wide => {
+                        let dep_partitions_num = graph.get_rdd(id.rdd_id).unwrap().partitions_num();
+                        for partition_id in 0..dep_partitions_num {
+                            self.resolve(
+                                graph,
+                                RddPartitionId {
+                                    rdd_id: dep,
+                                    partition_id,
+                                },
+                            );
+                        }
+                    }
+                }
+                let res = graph
+                    .get_rdd(id.rdd_id)
+                    .unwrap()
+                    .work(&self.cache, id.partition_id);
+                self.cache.put(id, res);
+            }
+            let res = graph
+                .get_rdd(id.rdd_id)
+                .unwrap()
+                .work(&self.cache, id.partition_id);
+            self.cache.put(id, res);
+        }
     }
 }
 
 mod dag_scheduler {
-    struct DagScheduler;
+    pub struct DagScheduler;
 }
 
 mod task_scheduler {
-    struct TaskScheduler;
+    pub struct TaskScheduler;
 }
 
-// TODO(zvikinoza): extract this to sep file
-// and use SparkContext as lib from rdd-simple
-pub struct Spark {
-    /// Resposible for storing current graph build up by user
-    graph: Graph,
-    /// Resposible for splitting up dag into tasks
-    dag_scheduler: DagScheduler,
-    /// resposible for scheduling tasks
-    /// This is the guy who sets tasks to execute for workers
-    task_scheduler: TaskScheduler,
-    tx: broadcast::Sender<Task>,
-    wait_handle: Option<tokio::task::JoinHandle<()>>,
-}
+pub mod spark {
+    use crate::{rdd::rdd::RddType, Config};
 
-impl Spark {
-    pub async fn new(config: Config) -> Self {
-        let (tx, _) = broadcast::channel(16);
-        let mut sc = Self {
-            sc: SparkContext::new(),
-            tx,
-            wait_handle: None,
-        };
-        if config.master {
-            sc.wait_handle = Some(master::start(config.n_workers, &sc.tx).await);
-        } else {
-            // better if we tokio::block of await? (to make Self::new sync)
-            worker::start(config.id).await; // this fn call never returns
+    use super::{
+        cache::ResultCache,
+        context::Context,
+        dag_scheduler::DagScheduler,
+        executor::Executor,
+        graph::Graph,
+        rdd::{
+            data_rdd::DataRdd, filter_rdd::FilterRdd, map_rdd::MapRdd, Data, RddId, RddIndex,
+            RddPartitionId,
+        },
+        task_scheduler::TaskScheduler,
+    };
+
+    // TODO(zvikinoza): extract this to sep file
+    // and use SparkContext as lib from rdd-simple
+    pub struct Spark {
+        /// Resposible for storing current graph build up by user
+        graph: Graph,
+        /// Resposible for splitting up dag into tasks
+        dag_scheduler: DagScheduler,
+        /// resposible for scheduling tasks
+        /// This is the guy who sets tasks to execute for workers
+        task_scheduler: TaskScheduler,
+        // tx: broadcast::Sender<Task>,
+        // wait_handle: Option<tokio::task::JoinHandle<()>>,
+    }
+
+    impl Spark {
+        pub fn new(config: Config) -> Self {
+            // let (tx, _) = broadcast::channel(16);
+            // let mut sc = Self {
+            //     sc: SparkContext::new(),
+            //     tx,
+            //     wait_handle: None,
+            // };
+            // if config.master {
+            //     sc.wait_handle = Some(master::start(config.n_workers, &sc.tx).await);
+            // } else {
+            //     // better if we tokio::block of await? (to make Self::new sync)
+            //     worker::start(config.id).await; // this fn call never returns
+            // }
+            // sc
+            Spark {
+                graph: Graph::default(),
+                dag_scheduler: DagScheduler,
+                task_scheduler: TaskScheduler,
+                // this field is basically storing Vec<T>s where T can be different for each id we are not
+                // doing Vec<Any> for perf reasons. downcasting is not free
+                // This should not be serialized because all workers have this is just a cache
+            }
         }
-        sc
+
+        // // TODO(zvikinoza): port this to fn drop
+        // // problem is Drop can't be async and await must be async
+        // pub async fn termiante(&mut self) {
+        //     match self.wait_handle {
+        //         Some(ref mut wh) => wh.await.unwrap(),
+        //         None => panic!("worker shouldn't be here"),
+        //     };
+        //     println!("\n\nmaster shutting down\n\n");
+        // }
     }
 
-    // TODO(zvikinoza): port this to fn drop
-    // problem is Drop can't be async and await must be async
-    pub async fn termiante(&mut self) {
-        match self.wait_handle {
-            Some(ref mut wh) => wh.await.unwrap(),
-            None => panic!("worker shouldn't be here"),
-        };
-        println!("\n\nmaster shutting down\n\n");
-    }
-}
+    impl Context for Spark {
+        fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> Vec<T> {
+            let mut result: Vec<T> = vec![];
+            let rdd_info = &self.graph.get_rdd(rdd.id).unwrap();
+            let rdd_id = rdd_info.id();
+            let partitions_num = rdd_info.partitions_num();
+            let mut executor = Executor::new();
+            for partition_id in 0..partitions_num {
+                let id = RddPartitionId {
+                    rdd_id,
+                    partition_id,
+                };
+                executor.resolve(&self.graph, id);
+                result.extend(
+                    executor
+                        .cache
+                        .get_as(rdd, id.partition_id)
+                        .unwrap()
+                        .to_vec(),
+                );
+            }
+            result
+        }
 
-impl Context for Spark {
-    fn collect<T: Data>(&mut self, rdd: RddIndex<T>) -> &[T] {
-        let sc = serde_json::to_string_pretty(&self.sc).unwrap();
-        let sr = serde_json::to_string_pretty(&rdd).unwrap();
-        let _res = self.tx.send(Task {
-            action: TaskAction::Work as i32,
-            context: sc,
-            rdd: sr,
-        });
-        self.sc.collect(rdd)
-    }
+        fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U> {
+            let id = RddId::new();
+            let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
+            self.graph.store_new_rdd(MapRdd {
+                id,
+                partitions_num,
+                prev: rdd,
+                map_fn: f,
+            });
+            RddIndex::new(id)
+        }
 
-    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U> {
-        self.sc.map(rdd, f)
-    }
+        fn filter<T: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> bool) -> RddIndex<T> {
+            let id = RddId::new();
+            let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
+            self.graph.store_new_rdd(FilterRdd {
+                id,
+                partitions_num,
+                prev: rdd,
+                filter_fn: f,
+            });
+            RddIndex::new(id)
+        }
 
-    fn new_from_list<T: Data + Clone>(&mut self, data: Vec<T>) -> RddIndex<T> {
-        self.sc.new_from_list(data)
+        fn new_from_list<T: Data + Clone>(&mut self, data: Vec<Vec<T>>) -> RddIndex<T> {
+            let id = RddId::new();
+            self.graph.store_new_rdd(DataRdd {
+                id,
+                partitions_num: data.len(),
+                data,
+            });
+            RddIndex::new(id)
+        }
     }
 }
