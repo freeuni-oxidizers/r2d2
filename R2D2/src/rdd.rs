@@ -4,157 +4,326 @@ use crate::Config;
 use crate::{master, worker};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-#[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
-pub struct RddId(usize);
 use crate::r2d2::{Task, TaskAction};
 use tokio::sync::broadcast;
 
-impl RddId {
-    pub fn new() -> RddId {
-        static COUNTER: AtomicUsize = AtomicUsize::new(1);
-        RddId(COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-}
-
 use std::{any::Any, collections::HashMap, marker::PhantomData};
 
-pub trait Data: Serialize + DeserializeOwned + 'static {}
+use self::rdd::{Data, RddBase, RddId, RddIndex};
 
-impl<T> Data for T where T: Serialize + DeserializeOwned + 'static {}
+pub mod rdd {
 
-#[derive(Default)]
-pub struct ResultCache {
-    data: HashMap<RddId, Box<dyn Any>>,
-}
+    use std::{
+        any::Any,
+        marker::PhantomData,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
-impl ResultCache {
-    pub fn has(&self, id: RddId) -> bool {
-        self.data.contains_key(&id)
+    use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+    use super::cache::ResultCache;
+    // TODO: maybe add uuid so that we can't pass one rdd index to another context
+    #[derive(Serialize, Deserialize)]
+    pub struct RddIndex<T> {
+        pub id: RddId,
+        #[serde(skip)]
+        _data: PhantomData<T>,
     }
 
-    pub fn put(&mut self, id: RddId, data: Box<dyn Any>) {
-        self.data.insert(id, data);
+    impl<T> RddIndex<T> {
+        fn new(id: RddId) -> Self {
+            RddIndex {
+                id,
+                _data: PhantomData::default(),
+            }
+        }
     }
 
-    pub fn get_as<T: Data>(&self, rdd: RddIndex<T>) -> Option<&[T]> {
-        self.data
-            .get(&rdd.id)
-            .map(|b| b.downcast_ref::<Vec<T>>().unwrap().as_slice())
-    }
-}
-
-/// methods independent of `Item` type
-pub trait RddBase: serde_traitobject::Serialize + serde_traitobject::Deserialize {
-    /// This expects that all the deps have already been put inside the cache
-    /// Ownership of results is passed back to context!
-    fn work(&self, cache: &ResultCache) -> Box<dyn Any>;
-
-    // TODO: maybe api like this possible
-    // fn work2(&self, ctx: &SparkContext) -> Box<dyn Any>;
-
-    /// serialize data returned by this rdd in a form which can be sent over the network
-    fn serialize_raw_data(&self, raw_data: &dyn Any) -> String;
-    /// deserialize data in a way which can be ingested into following rdds
-    fn deserialize_raw_data(&self, serialized_data: String) -> *const ();
-
-    /// Fetch unique id for this rdd
-    fn id(&self) -> RddId;
-
-    /// rdd dependencies
-    fn deps(&self) -> Vec<RddId>;
-}
-
-/// methods for Rdd which are dependent on `Item` type
-// TODO: do we need this???
-// trait Rdd: RddBase {
-//     type Item: Data;
-// }
-
-#[derive(Serialize, Deserialize)]
-pub struct DataRdd<T> {
-    id: RddId,
-    data: Vec<T>,
-}
-
-impl<T> RddBase for DataRdd<T>
-where
-    T: Data + Clone,
-{
-    fn serialize_raw_data(&self, _raw_data: &dyn Any) -> String {
-        todo!()
+    impl<T> Clone for RddIndex<T> {
+        fn clone(&self) -> RddIndex<T> {
+            RddIndex::new(self.id)
+        }
     }
 
-    fn deserialize_raw_data(&self, _serialized_data: String) -> *const () {
-        todo!()
+    impl<T> Copy for RddIndex<T> {}
+
+    #[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+    pub struct RddId(usize);
+    impl RddId {
+        pub fn new() -> RddId {
+            static COUNTER: AtomicUsize = AtomicUsize::new(1);
+            RddId(COUNTER.fetch_add(1, Ordering::Relaxed))
+        }
     }
 
-    fn id(&self) -> RddId {
-        self.id
+    #[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+    pub struct RddPartitionId {
+        pub rdd_id: RddId,
+        pub partition_id: usize,
     }
 
-    fn deps(&self) -> Vec<RddId> {
-        vec![]
+    pub trait Data: Serialize + DeserializeOwned + Clone + 'static {}
+
+    impl<T> Data for T where T: Serialize + DeserializeOwned + Clone + 'static {}
+
+    // trait DataFetcher {
+    //     fn fetch_owned<T>(&mut self, idx: RddIndex<T>, partition_id: usize) -> Vec<T>;
+    //     fn fetch_borrowed<T>(&self, idx: RddIndex<T>, partition_id: usize) -> &[T];
+    //     fn post_result<T>(&mut self, idx: RddIndex<T>, partition_id: usize, data: Vec<T>);
+    // }
+
+    enum RddType {
+        Narrow,
+        Wide,
     }
 
-    fn work(&self, _cache: &ResultCache) -> Box<dyn Any> {
-        Box::new(self.data.clone())
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct MapRdd<T, U> {
-    id: RddId,
-    prev: RddIndex<T>,
-    #[serde(with = "serde_fp")]
-    map_fn: fn(&T) -> U,
-}
-
-impl<T, U> RddBase for MapRdd<T, U>
-where
-    T: Data,
-    U: Data,
-{
-    fn serialize_raw_data(&self, _raw_data: &dyn Any) -> String {
-        todo!()
+    pub trait RddSerde {
+        /// serialize data returned by this rdd in a form which can be sent over the network
+        fn serialize_raw_data(&self, raw_data: &dyn Any) -> Vec<u8>;
+        /// deserialize data in a way which can be ingested into following rdds
+        fn deserialize_raw_data(&self, serialized_data: Vec<u8>) -> Box<dyn Any>;
     }
 
-    fn deserialize_raw_data(&self, _serialized_data: String) -> *const () {
-        todo!()
+    pub trait RddWork {
+        /// This expects that all the deps have already been put inside the cache
+        /// Ownership of results is passed back to context!
+        // TODO: Is being generic over DataFetcher here fine???
+        // maybe do enum_dispatch
+        fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any>;
     }
 
-    fn id(&self) -> RddId {
-        self.id
+    /// methods independent of `Item` type
+    pub trait RddBase:
+        RddWork + RddSerde + serde_traitobject::Serialize + serde_traitobject::Deserialize
+    {
+        /// Fetch unique id for this rdd
+        fn id(&self) -> RddId;
+
+        /// rdd dependencies
+        fn deps(&self) -> Vec<RddId>;
+
+        fn rdd_type(&self) -> RddType;
+
+        fn partitions_num(&self) -> usize;
     }
 
-    fn deps(&self) -> Vec<RddId> {
-        vec![self.prev.id]
+    /// methods for Rdd which are dependent on `Item` type
+    trait TypedRdd {
+        type Item: Data;
+
+        fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item>;
     }
 
-    fn work(&self, cache: &ResultCache) -> Box<dyn Any> {
-        let v = cache.get_as(self.prev).unwrap();
-        let g: Vec<U> = v.iter().map(self.map_fn).collect();
-        Box::new(g)
+    impl<T> RddSerde for T
+    where
+        T: TypedRdd,
+    {
+        fn serialize_raw_data(&self, raw_data: &dyn Any) -> Vec<u8> {
+            let data: &Vec<T::Item> = raw_data.downcast_ref().unwrap();
+            serde_json::to_vec(data).unwrap()
+        }
+
+        fn deserialize_raw_data(&self, serialized_data: Vec<u8>) -> Box<dyn Any> {
+            let data: Vec<T::Item> = serde_json::from_slice(&serialized_data).unwrap();
+            Box::new(data)
+        }
     }
-}
 
-// TODO: maybe add uuid so that we can't pass one rdd index to another context
-#[derive(Serialize, Deserialize)]
-pub struct RddIndex<T> {
-    pub id: RddId,
-    #[serde(skip)]
-    _data: PhantomData<T>,
-}
+    impl<T> RddWork for T
+    where
+        T: TypedRdd,
+    {
+        fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any> {
+            Box::new(Self::work(&self, cache, partition_id))
+        }
+    }
 
-impl<T> Clone for RddIndex<T> {
-    fn clone(&self) -> RddIndex<T> {
-        RddIndex {
-            id: self.id,
-            _data: PhantomData::default(),
+    pub mod data_rdd {
+
+        use serde::{Deserialize, Serialize};
+
+        use crate::rdd::cache::ResultCache;
+
+        use super::{Data, RddBase, RddId, RddType, TypedRdd};
+
+        #[derive(Serialize, Deserialize)]
+        pub struct DataRdd<T> {
+            id: RddId,
+            partitions_num: usize,
+            data: Vec<Vec<T>>,
+        }
+
+        impl<T> TypedRdd for DataRdd<T>
+        where
+            T: Data,
+        {
+            type Item = T;
+
+            fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item> {
+                self.data[partition_id]
+            }
+        }
+
+        impl<T> RddBase for DataRdd<T>
+        where
+            T: Data + Clone,
+        {
+            fn id(&self) -> RddId {
+                self.id
+            }
+
+            fn deps(&self) -> Vec<RddId> {
+                vec![]
+            }
+
+            fn rdd_type(&self) -> RddType {
+                RddType::Narrow
+            }
+
+            fn partitions_num(&self) -> usize {
+                self.partitions_num
+            }
+        }
+    }
+
+    pub mod map_rdd {
+
+        use serde::{Deserialize, Serialize};
+
+        use crate::rdd::cache::ResultCache;
+
+        use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd};
+
+        #[derive(Serialize, Deserialize)]
+        pub struct MapRdd<T, U> {
+            id: RddId,
+            prev: RddIndex<T>,
+            partitions_num: usize,
+            #[serde(with = "serde_fp")]
+            map_fn: fn(&T) -> U,
+        }
+
+        impl<T, U> TypedRdd for MapRdd<T, U>
+        where
+            T: Data,
+            U: Data,
+        {
+            type Item = U;
+
+            fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item> {
+                let v = cache.get_as(self.prev, partition_id).unwrap();
+                let g: Vec<U> = v.iter().map(self.map_fn).collect();
+                g
+            }
+        }
+
+        impl<T, U> RddBase for MapRdd<T, U>
+        where
+            T: Data,
+            U: Data,
+        {
+            fn id(&self) -> RddId {
+                self.id
+            }
+
+            fn deps(&self) -> Vec<RddId> {
+                vec![self.prev.id]
+            }
+
+            fn rdd_type(&self) -> super::RddType {
+                RddType::Narrow
+            }
+
+            fn partitions_num(&self) -> usize {
+                self.partitions_num
+            }
+        }
+    }
+
+    pub mod filter_rdd {
+        use serde::{Deserialize, Serialize};
+
+        use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd};
+
+        #[derive(Serialize, Deserialize)]
+        struct FilterRdd<T> {
+            id: RddId,
+            partitions_num: usize,
+            prev: RddIndex<T>,
+            #[serde(with = "serde_fp")]
+            filter_fn: fn(&T) -> bool,
+        }
+
+        impl<T> TypedRdd for FilterRdd<T>
+        where
+            T: Data,
+        {
+            type Item = T;
+
+            fn work(
+                &self,
+                cache: &crate::rdd::cache::ResultCache,
+                partition_id: usize,
+            ) -> Vec<Self::Item> {
+                let v = cache.get_as(self.prev, partition_id).unwrap();
+                let g: Vec<T> = v.to_vec().into_iter().filter(self.filter_fn).collect();
+                g
+            }
+        }
+
+        impl<T> RddBase for FilterRdd<T>
+        where
+            T: Data,
+        {
+            fn id(&self) -> RddId {
+                self.id
+            }
+
+            fn deps(&self) -> Vec<RddId> {
+                vec![self.prev.id]
+            }
+
+            fn rdd_type(&self) -> RddType {
+                RddType::Narrow
+            }
+
+            fn partitions_num(&self) -> usize {
+                self.partitions_num
+            }
         }
     }
 }
 
-impl<T> Copy for RddIndex<T> {}
+mod cache {
+    use std::{any::Any, collections::HashMap};
+
+    use super::rdd::{Data, RddIndex, RddPartitionId};
+    
+
+    #[derive(Default)]
+    pub struct ResultCache {
+        data: HashMap<RddPartitionId, Box<dyn Any>>,
+    }
+
+    impl ResultCache {
+        pub fn has(&self, id: RddPartitionId) -> bool {
+            self.data.contains_key(&id)
+        }
+
+        pub fn put(&mut self, id: RddPartitionId, data: Box<dyn Any>) {
+            self.data.insert(id, data);
+        }
+
+        pub fn get_as<T: Data>(&self, rdd: RddIndex<T>, partition_id: usize) -> Option<&[T]> {
+            self.data
+                .get(&RddPartitionId {
+                    rdd_id: rdd.id,
+                    partition_id,
+                })
+                .map(|b| b.downcast_ref::<Vec<T>>().unwrap().as_slice())
+        }
+    }
+}
 
 /// All these methods use interior mutability to keep state
 pub trait Context: 'static {
@@ -167,19 +336,27 @@ pub trait Context: 'static {
     // fn receive_serialized(&self, id: RddId, serialized_data: String);
 }
 
-// TODO: can't easily have custom deserialization for hashmap value sadge :(
-#[derive(Serialize, Deserialize)]
-pub struct RddHolder(#[serde(with = "serde_traitobject")] Box<dyn RddBase>);
+pub mod graph {
+    use std::collections::HashMap;
 
-#[derive(Default, Serialize, Deserialize)]
-pub struct SparkContext {
-    /// All the rdd's are stored in the context in here
-    rdds: HashMap<RddId, RddHolder>,
-    /// this field is basically storing Vec<T>s where T can be different for each id we are not
-    /// doing Vec<Any> for perf reasons. downcasting is not free
-    /// This should not be serialized because all workers have this is just a cache
-    #[serde(skip)]
-    cache: ResultCache,
+    use serde::{Deserialize, Serialize};
+
+    use super::rdd::{RddBase, RddId};
+
+    // TODO: can't easily have custom deserialization for hashmap value sadge :(
+    #[derive(Serialize, Deserialize)]
+    pub struct RddHolder(#[serde(with = "serde_traitobject")] Box<dyn RddBase>);
+
+    #[derive(Default, Serialize, Deserialize)]
+    pub struct Graph {
+        /// All the rdd's are stored in the context in here
+        rdds: HashMap<RddId, RddHolder>,
+        // /// this field is basically storing Vec<T>s where T can be different for each id we are not
+        // /// doing Vec<Any> for perf reasons. downcasting is not free
+        // /// This should not be serialized because all workers have this is just a cache
+        // #[serde(skip)]
+        // cache: ResultCache,
+    }
 }
 
 // TODO(zvikinoza): extract appropriate fn s to Spark
@@ -236,10 +413,37 @@ impl Context for SparkContext {
     }
 }
 
+struct RddDag {}
+
+mod executor {
+    pub struct Executor {
+        /// Graph for the current Execution
+        current_graph: Option<Graph>,
+        /// Cache which stores full partitions ready for next rdd
+        cache: ResultCache,
+        /// Cache which is used to store partial results of shuffle operations
+        takeout: ResultCache,
+    }
+}
+
+mod dag_scheduler {
+    struct DagScheduler;
+}
+
+mod task_scheduler {
+    struct TaskScheduler;
+}
+
 // TODO(zvikinoza): extract this to sep file
 // and use SparkContext as lib from rdd-simple
 pub struct Spark {
-    sc: SparkContext,
+    /// Resposible for storing current graph build up by user
+    graph: Graph,
+    /// Resposible for splitting up dag into tasks
+    dag_scheduler: DagScheduler,
+    /// resposible for scheduling tasks
+    /// This is the guy who sets tasks to execute for workers
+    task_scheduler: TaskScheduler,
     tx: broadcast::Sender<Task>,
     wait_handle: Option<tokio::task::JoinHandle<()>>,
 }
