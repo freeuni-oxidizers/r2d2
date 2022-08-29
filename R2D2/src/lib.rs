@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 mod master;
-pub mod rdd;
 pub mod runner;
 mod worker;
 
@@ -27,3 +26,6 @@ pub struct Config {
     #[clap(long, takes_value = true)]
     pub id: u32,
 }
+
+
+pub mod core;

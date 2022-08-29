@@ -1,9 +1,9 @@
 use crate::r2d2::master_client::MasterClient;
 use crate::r2d2::{GetTaskRequest, TaskResultRequest};
-use crate::rdd::executor::Executor;
-use crate::rdd::graph::Graph;
-use crate::rdd::rdd::RddPartitionId;
-use crate::rdd::task_scheduler::{WorkerEvent, WorkerMessage};
+use crate::core::executor::Executor;
+use crate::core::graph::Graph;
+use crate::core::rdd::RddPartitionId;
+use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
 use crate::MASTER_ADDR;
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;

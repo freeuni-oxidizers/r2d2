@@ -1,6 +1,6 @@
 use crate::r2d2::master_server::{Master, MasterServer};
 use crate::r2d2::{Empty, GetTaskRequest, GetTaskResponse, TaskResultRequest};
-use crate::rdd::task_scheduler::{WorkerEvent, WorkerMessage};
+use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::MASTER_ADDR;
@@ -51,8 +51,8 @@ impl Master for MasterService {
         assert!(id < self.n_workers);
         let task = { self.workers[id].lock().await.rx.try_recv() };
         // TODO: maybe tokio tracing?
-        println!("Sending woker #{id} task={task:?}");
         let task = task.unwrap_or(WorkerMessage::Wait);
+        println!("Sending worker #{id} task={task:?}");
         let serialized_task = serde_json::to_vec(&task).unwrap();
         Ok(Response::new(GetTaskResponse { serialized_task }))
     }
