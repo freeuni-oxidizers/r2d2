@@ -50,9 +50,9 @@ pub mod rdd {
         pub partition_id: usize,
     }
 
-    pub trait Data: Serialize + DeserializeOwned + Clone + Send + 'static {}
+    pub trait Data: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {}
 
-    impl<T> Data for T where T: Serialize + DeserializeOwned + Clone + Send + 'static {}
+    impl<T> Data for T where T: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {}
 
     // trait DataFetcher {
     //     fn fetch_owned<T>(&mut self, idx: RddIndex<T>, partition_id: usize) -> Vec<T>;
@@ -84,6 +84,7 @@ pub mod rdd {
     pub trait RddBase:
         RddBaseClone
         + Send
+        + Sync
         + RddWork
         + RddSerde
         + serde_traitobject::Serialize
@@ -350,7 +351,7 @@ mod cache {
 }
 
 pub mod graph {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fmt::Debug};
 
     use serde::{Deserialize, Serialize};
 
@@ -366,6 +367,14 @@ pub mod graph {
         rdds: HashMap<RddId, RddHolder>,
         // #[serde(skip)]
         // cache: ResultCache,
+    }
+
+    impl Debug for Graph {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("Graph")
+                .field("n_nodes", &self.rdds.len())
+                .finish()
+        }
     }
 
     impl Graph {
@@ -405,14 +414,13 @@ pub mod executor {
     use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId};
 
     pub struct Executor {
-        // /// Graph for the current Execution
-        // pub graph: Graph,
         /// Cache which stores full partitions ready for next rdd
         // this field is basically storing Vec<T>s where T can be different for each id we are not
         // doing Vec<Any> for perf reasons. downcasting is not free
         // This should not be serialized because all workers have this is just a cache
         pub cache: ResultCache,
         /// Cache which is used to store partial results of shuffle operations
+        // TODO: buckets
         pub takeout: ResultCache,
     }
 
@@ -472,30 +480,239 @@ pub mod executor {
 }
 
 mod dag_scheduler {
-    pub struct DagScheduler;
+    use std::any::Any;
+
+    use tokio::sync::{mpsc, oneshot};
+
+    use crate::rdd::task_scheduler::{Task, TaskSet};
+
+    use super::{
+        graph::Graph,
+        rdd::RddId,
+        task_scheduler::{DagMessage, WorkerEvent},
+    };
+
+    // collect
+    pub struct Job {
+        pub graph: Graph,
+        pub target_rdd_id: RddId,
+        pub materialized_data_channel: oneshot::Sender<Vec<Box<dyn Any + Send>>>,
+    }
+
+    pub struct DagScheduler {
+        job_receiver: mpsc::Receiver<Job>,
+        task_sender: mpsc::Sender<DagMessage>,
+        event_receiver: mpsc::Receiver<WorkerEvent>,
+        n_workers: usize,
+    }
+
+    impl DagScheduler {
+        pub fn new(
+            job_receiver: mpsc::Receiver<Job>,
+            task_sender: mpsc::Sender<DagMessage>,
+            event_receiver: mpsc::Receiver<WorkerEvent>,
+            n_workers: usize,
+        ) -> Self {
+            Self {
+                job_receiver,
+                task_sender,
+                event_receiver,
+                n_workers,
+            }
+        }
+
+        pub async fn start(mut self) {
+            println!("Dag scheduler is running!");
+            while let Some(job) = self.job_receiver.recv().await {
+                println!("new job received target_rdd_id={:?}", job.target_rdd_id);
+
+                let mut task_set = TaskSet { tasks: Vec::new() };
+                let target_rdd = job.graph.get_rdd(job.target_rdd_id).expect("rdd not found");
+                for partition_id in 0..target_rdd.partitions_num() {
+                    task_set.tasks.push(Task {
+                        final_rdd: job.target_rdd_id,
+                        partition_id,
+                        num_partitions: target_rdd.partitions_num(),
+                        preffered_worker_id: partition_id % self.n_workers,
+                    })
+                }
+                let graph = job.graph.clone();
+                self.task_sender
+                    .send(DagMessage::NewGraph(graph))
+                    .await
+                    .expect("can't send graph to task scheduler");
+
+                self.task_sender
+                    .send(DagMessage::SubmitTaskSet(task_set))
+                    .await
+                    .expect("can't send graph to task scheduler");
+
+                let mut result_v: Vec<Option<Box<dyn Any + Send>>> = Vec::new();
+                for _ in 0..target_rdd.partitions_num() {
+                    result_v.push(None);
+                }
+                let mut num_received = 0;
+                while let Some(result) = self.event_receiver.recv().await {
+                    match result {
+                        WorkerEvent::Success(task, serialized_rdd_data) => {
+                            let materialized_partition =
+                                target_rdd.deserialize_raw_data(serialized_rdd_data);
+                            assert!(result_v[task.partition_id].is_none());
+                            result_v[task.partition_id] = Some(materialized_partition);
+                            num_received += 1;
+                            if num_received == target_rdd.partitions_num() {
+                                let final_results =
+                                    result_v.into_iter().map(|v| v.unwrap()).collect();
+                                job.materialized_data_channel
+                                    .send(final_results)
+                                    .expect("can't returned materialied result to spark");
+                                break;
+                            }
+                        }
+                        WorkerEvent::Fail(_) => panic!("Task somehow failed?"),
+                    }
+                }
+            }
+        }
+    }
 }
 
-mod task_scheduler {
-    pub struct TaskScheduler;
+pub mod task_scheduler {
+
+    use std::fmt::Debug;
+
+    use serde::{Deserialize, Serialize};
+    use tokio::sync::mpsc;
+
+    use super::{graph::Graph, rdd::RddId};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub enum FailReason {
+        All,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub enum WorkerEvent {
+        Success(Task, Vec<u8>),
+        Fail(FailReason),
+    }
+
+    #[derive(Debug)]
+    pub enum DagMessage {
+        NewGraph(Graph),
+        SubmitTaskSet(TaskSet),
+    }
+
+    /// This will go to worker over network
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub enum WorkerMessage {
+        NewGraph(Graph),
+        RunTask(Task),
+        Wait,
+        Shutdown, //?
+    }
+
+    pub struct TaskScheduler {
+        /// Channel to receive `TaskSet`
+        // from dag scheduler
+        taskset_receiver: mpsc::Receiver<DagMessage>,
+        // to dag scheduler
+        dag_event_sender: mpsc::Sender<WorkerEvent>,
+        /// Channel for each worker
+        worker_queues: Vec<mpsc::Sender<WorkerMessage>>,
+        event_receiver: mpsc::Receiver<WorkerEvent>,
+        current_graph: Graph,
+    }
+
+    impl TaskScheduler {
+        pub fn new(
+            taskset_receiver: mpsc::Receiver<DagMessage>,
+            dag_event_sender: mpsc::Sender<WorkerEvent>,
+            worker_queues: Vec<mpsc::Sender<WorkerMessage>>,
+            event_receiver: mpsc::Receiver<WorkerEvent>,
+        ) -> Self {
+            Self {
+                taskset_receiver,
+                dag_event_sender,
+                worker_queues,
+                event_receiver,
+                current_graph: Graph::default(),
+            }
+        }
+
+        pub async fn handle_dag_message(&mut self, dag_message: DagMessage) {
+            match dag_message {
+                DagMessage::NewGraph(g) => {
+                    self.current_graph = g.clone();
+                    for worker_queue in self.worker_queues.clone().into_iter() {
+                        worker_queue
+                            .send(WorkerMessage::NewGraph(g.clone()))
+                            .await
+                            .expect("Can't send graph to rpc server")
+                    }
+                }
+                DagMessage::SubmitTaskSet(task_set) => {
+                    for task in task_set.tasks {
+                        self.worker_queues[task.preffered_worker_id]
+                            .send(WorkerMessage::RunTask(task))
+                            .await
+                            .expect("Can't send task to rpc server");
+                    }
+                }
+            }
+        }
+
+        pub async fn handle_event(&mut self, event: WorkerEvent) {
+            let dag_event_sender = self.dag_event_sender.clone();
+            dag_event_sender
+                .send(event)
+                .await
+                .expect("Can't send event to dag scheduler");
+        }
+
+        pub async fn start(mut self) {
+            loop {
+                tokio::select! {
+                    Some(dag_message) = self.taskset_receiver.recv() => {
+                        self.handle_dag_message(dag_message).await;
+                    }
+                    Some(event) = self.event_receiver.recv() => {
+                        self.handle_event(event).await;
+                    }
+                }
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct TaskSet {
+        // TODO: do JobId newtype
+        // job_id: usize,
+        pub tasks: Vec<Task>,
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct Task {
+        pub final_rdd: RddId,
+        pub partition_id: usize,
+        pub num_partitions: usize,
+        pub preffered_worker_id: usize,
+    }
 }
 
 pub mod spark {
-    use std::{any::Any, fmt::Debug};
+    use std::{fmt::Debug, process::exit};
 
-    use tokio::sync::{broadcast, mpsc, oneshot};
+    use tokio::sync::{mpsc, oneshot};
 
-    use crate::Config;
+    use crate::{master::MasterService, worker, Config};
 
     use super::{
         context::Context,
-        dag_scheduler::DagScheduler,
-        executor::Executor,
+        dag_scheduler::{DagScheduler, Job},
         graph::Graph,
-        rdd::{
-            data_rdd::DataRdd, filter_rdd::FilterRdd, map_rdd::MapRdd, Data, RddId, RddIndex,
-            RddPartitionId,
-        },
-        task_scheduler::TaskScheduler,
+        rdd::{data_rdd::DataRdd, filter_rdd::FilterRdd, map_rdd::MapRdd, Data, RddId, RddIndex},
+        task_scheduler::{DagMessage, TaskScheduler, WorkerEvent, WorkerMessage},
     };
 
     // TODO(zvikinoza): extract this to sep file
@@ -503,22 +720,7 @@ pub mod spark {
     pub struct Spark {
         /// Resposible for storing current graph build up by user
         graph: Graph,
-
-        job_channel: mpsc::Sender<Job>, // Resposible for splitting up dag into tasks
-                                        // dag_scheduler: dagscheduler,
-
-                                        // resposible for scheduling tasks
-                                        // This is the guy who sets tasks to execute for workers
-                                        // task_scheduler: TaskScheduler,
-
-                                        // tx: broadcast::Sender<Task>,
-                                        // wait_handle: Option<tokio::task::JoinHandle<()>>,
-    }
-
-    pub struct Job {
-        graph: Graph,
-        target_rdd: RddId,
-        materialized_data_channel: oneshot::Sender<Vec<Box<dyn Any + Send>>>,
+        job_channel: mpsc::Sender<Job>,
     }
 
     impl Debug for Job {
@@ -532,7 +734,7 @@ pub mod spark {
     }
 
     impl Spark {
-        pub fn new(config: Config) -> Self {
+        pub async fn new(config: Config) -> Self {
             // start DagScheduler
             // start TaskScheduler
             // start RpcServer
@@ -543,39 +745,42 @@ pub mod spark {
             //     tx,
             //     wait_handle: None,
             // };
-            // if config.master {
-            //     sc.wait_handle = Some(master::start(config.n_workers, &sc.tx).await);
-            // } else {
-            //     // better if we tokio::block of await? (to make Self::new sync)
-            //     worker::start(config.id).await; // this fn call never returns
-            // }
+            if !config.master {
+                let jh = tokio::spawn(async move {
+                    worker::start(config.id).await; // this fn call never returns
+                });
+                jh.await.unwrap();
+                exit(0);
+            }
             // sc
-            let (job_tx, mut job_rx) = mpsc::channel::<Job>(32);
-            tokio::spawn(async move {
-                dbg!("wow I'm executing");
-                while let Some(v) = job_rx.recv().await {
-                    dbg!(v.target_rdd);
-                    v.materialized_data_channel.send(vec![Box::new(vec![1_i32])]).unwrap();
-                }
-            });
+
+            let (job_tx, job_rx) = mpsc::channel::<Job>(32);
+            let (dag_msg_tx, dag_msg_rx) = mpsc::channel::<DagMessage>(32);
+            let (dag_evt_tx, dag_evt_rx) = mpsc::channel::<WorkerEvent>(32);
+
+            // task scheduler  <-------------> rpc server
+            //                 ---Message---->
+            //                 <----Event----
+            let (wrk_txs, wrk_rxs): (Vec<_>, Vec<_>) = (0..config.n_workers)
+                .map(|_| mpsc::channel::<WorkerMessage>(32))
+                .unzip();
+            let (wrk_evt_tx, wrk_evt_rx) = mpsc::channel::<WorkerEvent>(32);
+
+            let dag_scheduler = DagScheduler::new(job_rx, dag_msg_tx, dag_evt_rx, config.n_workers);
+            println!("dag scheduler should start running soon!");
+            tokio::spawn(async move { dag_scheduler.start().await });
+            let task_scheduler = TaskScheduler::new(dag_msg_rx, dag_evt_tx, wrk_txs, wrk_evt_rx);
+            tokio::spawn(async move { task_scheduler.start().await });
+            let rpc_server = MasterService::new(wrk_rxs, wrk_evt_tx);
+            // TODO: Maybe aggregate some way to shutdown all the schedulers and rpc server
+            // together and keep handle on that in `Spark`
+            tokio::spawn(async move { rpc_server.start().await });
 
             Spark {
                 graph: Graph::default(),
                 job_channel: job_tx,
-                // dag_scheduler: DagScheduler,
-                // task_scheduler: TaskScheduler,
             }
         }
-
-        // // TODO(zvikinoza): port this to fn drop
-        // // problem is Drop can't be async and await must be async
-        // pub async fn termiante(&mut self) {
-        //     match self.wait_handle {
-        //         Some(ref mut wh) => wh.await.unwrap(),
-        //         None => panic!("worker shouldn't be here"),
-        //     };
-        //     println!("\n\nmaster shutting down\n\n");
-        // }
     }
 
     impl Spark {
@@ -583,37 +788,16 @@ pub mod spark {
             let (mat_tx, mat_rx) = oneshot::channel();
             let job = Job {
                 graph: self.graph.clone(),
-                target_rdd: rdd.id,
+                target_rdd_id: rdd.id,
                 materialized_data_channel: mat_tx,
             };
-            let t = self.job_channel.send(job).await.unwrap();
+            self.job_channel.send(job).await.unwrap();
             let v = mat_rx.await.expect("couldn't get result");
             return v
                 .into_iter()
                 .map(|vany| (*vany.downcast::<Vec<T>>().unwrap()))
                 .flatten()
                 .collect();
-
-            let mut result: Vec<T> = vec![];
-            let rdd_info = &self.graph.get_rdd(rdd.id).unwrap();
-            let rdd_id = rdd_info.id();
-            let partitions_num = rdd_info.partitions_num();
-            let mut executor = Executor::new();
-            for partition_id in 0..partitions_num {
-                let id = RddPartitionId {
-                    rdd_id,
-                    partition_id,
-                };
-                executor.resolve(&self.graph, id);
-                result.extend(
-                    executor
-                        .cache
-                        .get_as(rdd, id.partition_id)
-                        .unwrap()
-                        .to_vec(),
-                );
-            }
-            result
         }
     }
 

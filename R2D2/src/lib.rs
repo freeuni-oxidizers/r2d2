@@ -6,27 +6,24 @@ pub mod runner;
 mod worker;
 
 pub mod r2d2 {
-    // TODO: maybe do normal rust types since we don't care about sharing this rpc server with
-    // anyone
     tonic::include_proto!("r2d2");
 }
 
 use clap::Parser;
 
-pub const RUNNER_ADDR: &str = "127.0.0.1:6901";
 pub const MASTER_ADDR: &str = "127.0.0.1:6969";
 
 // This way we can allow user to have their own custom cli.
 /// User can parse this directly from cli args or construct it themselves.
 #[derive(Parser, Debug, Clone)]
-#[clap(about = "Stiffler")]
+#[clap(about = "Default arguments for generic r2d2 app")]
 pub struct Config {
     #[clap(long, takes_value = false)]
-    master: bool,
+    pub master: bool,
 
     #[clap(long, short, takes_value = true, default_value = "1")]
-    n_workers: u32,
+    pub n_workers: usize,
 
     #[clap(long, takes_value = true)]
-    id: u32,
+    pub id: u32,
 }

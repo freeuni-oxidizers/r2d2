@@ -1,9 +1,0 @@
-[package]
-name = "single_worker"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-R2D2 = { path = "../../R2D2" }
-clap = { version = "3.0", features = ["derive"] }
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
