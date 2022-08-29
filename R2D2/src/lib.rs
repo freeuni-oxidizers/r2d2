@@ -11,24 +11,19 @@ pub mod r2d2 {
 
 use clap::Parser;
 
-pub const RUNNER_ADDR: &str = "[::1]:51158";
-pub const MASTER_ADDR: &str = "[::1]:51159";
+pub const MASTER_ADDR: &str = "127.0.0.1:6969";
 
+// This way we can allow user to have their own custom cli.
+/// User can parse this directly from cli args or construct it themselves.
 #[derive(Parser, Debug, Clone)]
-#[clap(about = "Stiffler")]
+#[clap(about = "Default arguments for generic r2d2 app")]
 pub struct Config {
-    #[clap(short, long, parse(from_os_str))]
-    pub intput_path: std::path::PathBuf,
-
-    #[clap(short, long, parse(from_os_str))]
-    pub output_path: std::path::PathBuf,
-
     #[clap(long, takes_value = false)]
-    master: bool,
+    pub master: bool,
 
     #[clap(long, short, takes_value = true, default_value = "1")]
-    n_workers: u32,
+    pub n_workers: usize,
 
     #[clap(long, takes_value = true)]
-    id: u32,
+    pub id: u32,
 }

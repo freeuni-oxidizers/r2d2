@@ -79,26 +79,6 @@ impl<T, Ret> FunctionPointer for fn(&T) -> Ret {
     }
 }
 
-// #[derive(Serialize, Deserialize)]
-// pub struct SFp<T: FunctionPointer> {
-//     rel_fp: usize,
-//     #[serde(skip, default)]
-//     function_type: PhantomData<fn(T)>,
-// }
-//
-// impl<T: FunctionPointer> SFp<T> {
-//     pub fn new(f: T) -> Self {
-//         Self {
-//             rel_fp: f.as_usize().overflowing_sub(*BINARY_BASE).0,
-//             function_type: PhantomData,
-//         }
-//     }
-//
-//     pub fn back(&self) -> T {
-//         unsafe { FunctionPointer::from_usize(self.rel_fp.overflowing_add(*BINARY_BASE).0) }
-//     }
-// }
-
 pub fn serialize<T: FunctionPointer, S>(fp: &T, s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -121,36 +101,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // #[test]
-    // fn single_arg() {
-    //     let double: fn(i32) -> i32 = |x| 2 * x;
-    //     let wow: SFp<fn(i32) -> i32> = SFp::new(double);
-    //     let double_copy = wow.back();
-    //     assert_eq!(double(100), double_copy(100));
-    // }
-    //
-    // #[test]
-    // fn two_args() {
-    //     let sum_fn: fn(i32, i32) -> i32 = |x, y| x + y;
-    //     let wow = SFp::new(sum_fn);
-    //     let sum_fn_copy = wow.back();
-    //     assert_eq!(sum_fn(50, 100), sum_fn_copy(50, 100));
-    // }
-    //
-    // #[test]
-    // fn single_arg_serde() {
-    //     let double: fn(i32) -> i32 = |x| 2 * x;
-    //     let wow: SFp<fn(i32) -> i32> = SFp::new(double);
-    //
-    //     let fp_json = serde_json::to_string_pretty(&wow).unwrap();
-    //     println!("{}", fp_json);
-    //
-    //     let wow_serde: SFp<fn(i32) -> i32> = serde_json::from_str(&fp_json).unwrap();
-    //     let double_copy = wow_serde.back();
-    //
-    //     assert_eq!(double(100), double_copy(100));
-    // }
 
     #[derive(Serialize, Deserialize)]
     struct FpContainer {
