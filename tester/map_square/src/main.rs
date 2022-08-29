@@ -1,5 +1,5 @@
 use clap::Parser;
-use R2D2::{Config, rdd::{spark::Spark, context::Context}};
+use R2D2::{Config, core::{spark::Spark, context::Context}};
 
 #[tokio::main]
 async fn main() {
