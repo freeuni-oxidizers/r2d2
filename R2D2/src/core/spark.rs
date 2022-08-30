@@ -44,7 +44,7 @@ impl Spark {
         // };
         if !config.master {
             let jh = tokio::spawn(async move {
-                worker::start(config.id).await; // this fn call never returns
+                worker::start(config.id, config.port).await; // this fn call never returns
             });
             jh.await.unwrap();
             exit(0);

@@ -19,3 +19,15 @@ message GetTaskRequest {
 message GetTaskResponse {
 	bytes serialized_task = 1;
 }
+
+service Worker {
+    rpc get_bucket(GetBucketRequest) returns (GetBucketResponse);
+}
+
+message GetBucketRequest {
+    uint32 rdd_id = 1;
+    uint32 partition_id = 2;
+}
+
+message GetBucketResponse {
+}

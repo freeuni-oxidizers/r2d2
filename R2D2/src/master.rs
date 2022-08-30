@@ -1,6 +1,6 @@
+use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
 use crate::r2d2::master_server::{Master, MasterServer};
 use crate::r2d2::{Empty, GetTaskRequest, GetTaskResponse, TaskResultRequest};
-use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::MASTER_ADDR;

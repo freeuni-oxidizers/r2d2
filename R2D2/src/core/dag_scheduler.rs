@@ -79,8 +79,7 @@ impl DagScheduler {
                         result_v[task.partition_id] = Some(materialized_partition);
                         num_received += 1;
                         if num_received == target_rdd.partitions_num() {
-                            let final_results =
-                                result_v.into_iter().map(|v| v.unwrap()).collect();
+                            let final_results = result_v.into_iter().map(|v| v.unwrap()).collect();
                             job.materialized_data_channel
                                 .send(final_results)
                                 .expect("can't returned materialied result to spark");

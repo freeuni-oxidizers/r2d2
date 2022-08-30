@@ -10,6 +10,7 @@ pub mod r2d2 {
 
 use clap::Parser;
 
+pub const ADDR_BASE: &str = "127.0.0.1";
 pub const MASTER_ADDR: &str = "127.0.0.1:6969";
 
 // This way we can allow user to have their own custom cli.
@@ -25,7 +26,9 @@ pub struct Config {
 
     #[clap(long, takes_value = true)]
     pub id: u32,
-}
 
+    #[clap(long, takes_value = true)]
+    pub port: u32,
+}
 
 pub mod core;

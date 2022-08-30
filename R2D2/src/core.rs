@@ -1,6 +1,6 @@
 pub mod rdd;
 
-mod cache;
+pub mod cache;
 
 pub mod graph;
 
