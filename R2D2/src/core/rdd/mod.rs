@@ -87,16 +87,24 @@ trait TypedRddWideWork {
     fn partition_data(
         &self,
         input_partition: Vec<(Self::K, Self::V)>,
-    ) -> Vec<Vec<(Self::K, Self::V)>>;
+    ) -> Vec<Vec<(Self::K, Self::V)>> {
+        unreachable!()
+    }
     fn aggregate_inside_bucket(
         &self,
         bucket_data: Vec<(Self::K, Self::V)>,
-    ) -> Vec<(Self::K, Self::C)>;
+    ) -> Vec<(Self::K, Self::C)> {
+        unreachable!()
+    }
     fn aggregate_buckets(
         &self,
         buckets_aggr_data: Vec<Vec<(Self::K, Self::C)>>,
-    ) -> Vec<(Self::K, Self::C)>;
+    ) -> Vec<(Self::K, Self::C)> {
+        unreachable!()
+    }
 }
+
+// impl TypedRddWideWork {}
 
 pub trait RddWideWork {
     /// distributes data in local buckets according to K
@@ -125,15 +133,15 @@ where
     T: TypedRddWideWork,
 {
     fn partition_data(&self, input_partition: Box<dyn Any + Send>) -> Vec<Box<dyn Any + Send>> {
-        Self::partition_data(&self, input_partition.downcast().unwrap())
+        Self::partition_data(&self, *input_partition.downcast().unwrap())
             .into_iter()
-            .map(|x| Box::new(x))
+            .map(|x| -> Box<dyn Any + Send> { Box::new(x) })
             .collect()
     }
     fn aggregate_inside_bucket(&self, bucket_data: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
         Box::new(Self::aggregate_inside_bucket(
             &self,
-            bucket_data.downcast().unwrap(),
+            *bucket_data.downcast().unwrap(),
         ))
     }
     fn aggregate_buckets(
@@ -144,7 +152,8 @@ where
             &self,
             buckets_aggr_data
                 .into_iter()
-                .map(|x| x.downcast().unwrap().collect()),
+                .map(|x| *x.downcast().unwrap())
+                .collect(),
         ))
     }
 }
@@ -156,8 +165,7 @@ pub trait RddBase:
     + RddWork
     + RddSerde
     + serde_traitobject::Serialize
-    + serde_traitobject::Deserialize
-    + RddWideWork
+    + serde_traitobject::Deserialize // + RddWideWork
 {
     /// Fetch unique id for this rdd
     fn id(&self) -> RddId;
