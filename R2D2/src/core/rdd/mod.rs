@@ -229,5 +229,7 @@ pub mod map_rdd;
 
 pub mod filter_rdd;
 
+pub mod shuffle_rdd;
+
 // crate::core::rdd::RddBase;
 // crate::core::rdd::map_rdd::MapRdd;
