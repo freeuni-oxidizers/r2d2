@@ -3,7 +3,6 @@ use crate::r2d2::master_server::{Master, MasterServer};
 use crate::r2d2::{Empty, GetTaskRequest, GetTaskResponse, TaskResultRequest};
 use tonic::{transport::Server, Request, Response, Status};
 
-use crate::MASTER_ADDR;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
@@ -72,10 +71,11 @@ impl Master for MasterService {
 }
 
 impl MasterService {
-    pub async fn start(self) {
+    pub async fn start(self, port: usize) {
+        let addr = format!("0.0.0.0:{port}").parse().unwrap();
         Server::builder()
             .add_service(MasterServer::new(self))
-            .serve(MASTER_ADDR.parse().unwrap())
+            .serve(addr)
             .await
             .expect("Error: couldn't start master service");
     }

@@ -1,12 +1,12 @@
 use clap::Parser;
 use R2D2::{
     core::{context::Context, spark::Spark},
-    Config,
+    Args,
 };
 
 #[tokio::main]
 async fn main() {
-    let config = Config::parse();
+    let config = Args::parse();
     let mut spark = Spark::new(config).await;
 
     let data = vec![

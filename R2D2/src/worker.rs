@@ -1,17 +1,17 @@
-use crate::core::cache::ResultCache;
 use crate::core::executor::Executor;
 use crate::core::graph::Graph;
 use crate::core::rdd::{RddId, RddPartitionId};
 use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
 use crate::r2d2::master_client::MasterClient;
-use crate::r2d2::worker_server::{Worker, WorkerServer};
-use crate::r2d2::{GetBucketRequest, GetBucketResponse};
 use crate::r2d2::{GetTaskRequest, TaskResultRequest};
-use crate::{MASTER_ADDR, ADDR_BASE};
-use tokio::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;
-use tonic::{transport::Server, Request, Response, Status};
+use tonic::Request;
 
 async fn get_master_client(
     master_addr: String,
@@ -29,54 +29,40 @@ async fn get_master_client(
         }
     }
 }
+type Cache = Arc<Mutex<HashMap<RddPartitionId, Vec<u8>>>>;
 
-#[derive(Debug)]
-pub struct WorkerService {
-    _id: u32,
-    cache: Mutex<ResultCache>,
-}
-
-impl WorkerService {
-    fn new(id: u32) -> Self {
-        Self {
-            _id: id,
-            cache: Mutex::new(ResultCache::default()),
-        }
-    }
-}
-
-#[tonic::async_trait]
-impl Worker for WorkerService {
-    async fn get_bucket(
-        &self,
-        request: Request<GetBucketRequest>,
-    ) -> Result<Response<GetBucketResponse>, Status> {
-        let request = request.into_inner();
-        let rdd_pid = RddPartitionId {
-            rdd_id: RddId(request.rdd_id as usize),
-            partition_id: request.partition_id as usize,
-        };
-        if !self.cache.lock().await.has(rdd_pid) {
-            return Err(Status::new(tonic::Code::InvalidArgument, "invalid rddid"));
-        }
-        Ok(Response::new(GetBucketResponse {}))
-    }
-}
-
-pub async fn start(id: u32, port: u32) {
+async fn handle_connection(mut socket: TcpStream, cache: Cache) {
     tokio::spawn(async move {
-        let worker = WorkerService::new(id);
-        let addr = format!("#{ADDR_BASE}:#{port}").parse().unwrap();
-        Server::builder()
-            .add_service(WorkerServer::new(worker))
-            .serve(addr)
-            .await
-            .expect("Couldn't start worker service");
+        let rdd_id = socket.read_u32().await.expect("") as usize;
+        let partition_id = socket.read_u32().await.expect("") as usize;
+        let rdd_pid = RddPartitionId {
+            rdd_id: RddId(rdd_id),
+            partition_id,
+        };
+        let data = { cache.lock().unwrap().remove(&rdd_pid).unwrap() };
+        // TODO: if fail sending return data to cache.
+        if socket.write_all(&data).await.is_err() {
+            cache.lock().unwrap().insert(rdd_pid, data);
+        }
+    });
+}
+
+pub async fn start(id: usize, port: usize, master_addr: String) {
+    let cache: Cache = Arc::new(Mutex::new(HashMap::new()));
+    let cachecp = cache.clone();
+    tokio::spawn(async move {
+        let addr = format!("0.0.0.0:{port}");
+        let listener = TcpListener::bind(addr).await.expect("Worker couldn't bind");
+        loop {
+            if let Ok((socket, _)) = listener.accept().await {
+                handle_connection(socket, cachecp.clone()).await;
+            }
+        }
     });
 
     // master may not be running yet
     println!("Worker #{id} starting");
-    let mut master_conn = get_master_client(format!("http://{}", MASTER_ADDR))
+    let mut master_conn = get_master_client(format!("http://{}", master_addr))
         .await
         .expect("Worker couldn't connect to master");
     let mut graph: Graph = Graph::default();
@@ -84,7 +70,7 @@ pub async fn start(id: u32, port: u32) {
     let mut executor = Executor::new();
     loop {
         let get_task_response = match master_conn
-            .get_task(Request::new(GetTaskRequest { id }))
+            .get_task(Request::new(GetTaskRequest { id: id as u32 }))
             .await
         {
             Ok(r) => r.into_inner(),
@@ -110,13 +96,12 @@ pub async fn start(id: u32, port: u32) {
                 break;
             }
         };
-        executor.resolve(
-            &graph,
-            RddPartitionId {
-                rdd_id: task.final_rdd,
-                partition_id: task.partition_id,
-            },
-        );
+        let rdd_pid = RddPartitionId {
+            rdd_id: task.final_rdd,
+            partition_id: task.partition_id,
+        };
+        executor.resolve(&graph, rdd_pid);
+
         let materialized_rdd_result = graph.get_rdd(task.final_rdd).unwrap().serialize_raw_data(
             executor
                 .cache
@@ -129,6 +114,10 @@ pub async fn start(id: u32, port: u32) {
             serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
         };
         println!("worker={} got result={:?}", id, result);
+        cache
+            .lock()
+            .unwrap()
+            .insert(rdd_pid, result.serialized_task_result.clone());
         master_conn
             .post_task_result(Request::new(result))
             .await
