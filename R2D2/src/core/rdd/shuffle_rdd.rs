@@ -15,7 +15,7 @@ pub struct ShuffleRdd<K, V, C, P, A> {
 
 pub trait Partitioner: Data {
     type Key: Data;
-    fn partititon_by(&self, key: Self::Key) -> usize;
+    fn partititon_by(&self, key: &Self::Key) -> usize;
 }
 
 // (V) -> Acc
@@ -54,9 +54,43 @@ where
     K: Data,
     V: Data,
     C: Data,
-    P: Partitioner,
-    A: Aggregator,
+    P: Partitioner<Key = K>,
+    A: Aggregator<Value = V, Combiner = C>,
 {
+    type K = K;
+    type V = V;
+    type C = C;
+
+    fn partition_data(
+        &self,
+        input_partition: Vec<(Self::K, Self::V)>,
+    ) -> Vec<Vec<(Self::K, Self::V)>> {
+        let mut result = Vec::new();
+        for _ in 0..self.partitions_num {
+            result.push(Vec::new());
+        }
+
+        for elem in input_partition.into_iter() {
+            let partition_idx = self.partitioner.partititon_by(&elem.0);
+            result[partition_idx].push(elem);
+        }
+
+        result
+    }
+
+    fn aggregate_inside_bucket(
+        &self,
+        bucket_data: Vec<(Self::K, Self::V)>,
+    ) -> Vec<(Self::K, Self::C)> {
+        todo!()
+    }
+
+    fn aggregate_buckets(
+        &self,
+        buckets_aggr_data: Vec<Vec<(Self::K, Self::C)>>,
+    ) -> Vec<(Self::K, Self::C)> {
+        todo!()
+    }
 }
 
 impl<K, V, C, P, A> RddBase for ShuffleRdd<K, V, C, P, A>
