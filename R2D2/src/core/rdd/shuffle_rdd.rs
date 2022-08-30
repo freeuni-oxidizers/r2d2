@@ -1,3 +1,5 @@
+use std::{collections::HashMap, hash::Hash};
+
 use serde::{Deserialize, Serialize};
 
 use crate::core::cache::ResultCache;
@@ -51,7 +53,7 @@ where
 
 impl<K, V, C, P, A> TypedRddWideWork for ShuffleRdd<K, V, C, P, A>
 where
-    K: Data,
+    K: Data + Eq + Hash,
     V: Data,
     C: Data,
     P: Partitioner<Key = K>,
@@ -82,7 +84,29 @@ where
         &self,
         bucket_data: Vec<(Self::K, Self::V)>,
     ) -> Vec<(Self::K, Self::C)> {
-        todo!()
+        // TODO: handle aggreagte = Null case (repartition e. g.)
+        let aggr = self.aggregator.as_ref().unwrap();
+
+        let mut bucket_by_keys = HashMap::new();
+        for (k, v) in bucket_data.into_iter() {
+            bucket_by_keys.entry(k).or_insert_with(Vec::new).push(v)
+        }
+
+        bucket_by_keys
+            .into_iter()
+            .map(|x| {
+                (
+                    x.0,
+                    x.1.into_iter()
+                        .fold(aggr.create_combiner(), |acc, y| aggr.merge_value(y, acc)),
+                )
+            })
+            .collect()
+
+        // println!("{:?}", bucket_by_keys);
+        // for elem in bucket_data.into_iter() {
+        //     aggr.merge_value(elem.1, combiner)
+        // }
     }
 
     fn aggregate_buckets(
