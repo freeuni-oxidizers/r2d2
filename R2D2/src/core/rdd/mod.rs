@@ -34,7 +34,7 @@ impl<T> Clone for RddIndex<T> {
 impl<T> Copy for RddIndex<T> {}
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
-pub struct RddId(usize);
+pub struct RddId(pub usize);
 impl RddId {
     pub fn new() -> RddId {
         static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -160,4 +160,3 @@ pub mod filter_rdd;
 
 // crate::core::rdd::RddBase;
 // crate::core::rdd::map_rdd::MapRdd;
-

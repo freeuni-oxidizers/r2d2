@@ -2,7 +2,7 @@ use std::{any::Any, collections::HashMap};
 
 use super::rdd::{Data, RddId, RddIndex, RddPartitionId};
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ResultCache {
     data: HashMap<RddPartitionId, Box<dyn Any + Send>>,
 }
