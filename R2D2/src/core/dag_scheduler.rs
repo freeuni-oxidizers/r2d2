@@ -46,6 +46,7 @@ impl DagScheduler {
 
             let mut task_set = TaskSet { tasks: Vec::new() };
             let target_rdd = job.graph.get_rdd(job.target_rdd_id).expect("rdd not found");
+            // TODO: actually find stages
             for partition_id in 0..target_rdd.partitions_num() {
                 task_set.tasks.push(Task {
                     final_rdd: job.target_rdd_id,
@@ -60,6 +61,7 @@ impl DagScheduler {
                 .await
                 .expect("can't send graph to task scheduler");
 
+            // TODO: send taskset per stage
             self.task_sender
                 .send(DagMessage::SubmitTaskSet(task_set))
                 .await
@@ -70,6 +72,8 @@ impl DagScheduler {
                 result_v.push(None);
             }
             let mut num_received = 0;
+            // TODO: We don't need to receive task materialized results every time.
+            // only for last tasks in graph
             while let Some(result) = self.event_receiver.recv().await {
                 match result {
                     WorkerEvent::Success(task, serialized_rdd_data) => {
