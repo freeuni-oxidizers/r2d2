@@ -1,4 +1,4 @@
-use crate::core::rdd::RddType;
+use crate::core::rdd::{RddType, RddWorkFns};
 
 use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId};
 
@@ -53,16 +53,20 @@ impl Executor {
                     }
                 }
             }
-            let res = graph
-                .get_rdd(id.rdd_id)
-                .unwrap()
-                .work(&self.cache, id.partition_id);
-            self.cache.put(id, res);
+            self.resolve(
+                graph,
+                RddPartitionId {
+                    rdd_id: dep,
+                    partition_id: id.partition_id,
+                },
+            );
         }
-        let res = graph
-            .get_rdd(id.rdd_id)
-            .unwrap()
-            .work(&self.cache, id.partition_id);
-        self.cache.put(id, res);
+        match graph.get_rdd(id.rdd_id).unwrap().work_fns() {
+            RddWorkFns::Narrow(narrow_work) => {
+                let res = narrow_work.work(&self.cache, id.partition_id);
+                self.cache.put(id, res);
+            }
+            RddWorkFns::Wide(_) => todo!(),
+        };
     }
 }

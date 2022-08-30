@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::cache::ResultCache;
 
-use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd, TypedRddWideWork};
+use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd, TypedRddWideWork, RddWorkFns};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ShuffleRdd<K, V, C, P, A> {
@@ -98,8 +98,8 @@ where
     K: Data,
     V: Data,
     C: Data,
-    P: Partitioner,
-    A: Aggregator,
+    P: Partitioner<Key = K>,
+    A: Aggregator<Value = V, Combiner = C>,
 {
     fn id(&self) -> RddId {
         self.idx.id
@@ -115,5 +115,9 @@ where
 
     fn partitions_num(&self) -> usize {
         self.partitions_num
+    }
+
+    fn work_fns(&self) -> RddWorkFns {
+        RddWorkFns::Wide(self)
     }
 }

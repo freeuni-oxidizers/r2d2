@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::cache::ResultCache;
 
-use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd};
+use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd, RddWorkFns};
 
 // TODO: maybe no pub?
 #[derive(Clone, Serialize, Deserialize)]
@@ -47,5 +47,9 @@ where
 
     fn partitions_num(&self) -> usize {
         self.partitions_num
+    }
+
+    fn work_fns(&self) -> RddWorkFns {
+        RddWorkFns::Narrow(self)
     }
 }

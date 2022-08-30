@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd};
+use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd, RddWorkFns};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FilterRdd<T> {
@@ -46,5 +46,9 @@ where
 
     fn partitions_num(&self) -> usize {
         self.partitions_num
+    }
+
+    fn work_fns(&self) -> RddWorkFns {
+        RddWorkFns::Narrow(self)
     }
 }

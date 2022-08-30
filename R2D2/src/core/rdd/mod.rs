@@ -158,14 +158,18 @@ where
     }
 }
 
+pub enum RddWorkFns<'a> {
+    Narrow(&'a dyn RddWork),
+    Wide(&'a dyn RddWideWork),
+}
+
 pub trait RddBase:
     RddBaseClone
     + Send
     + Sync
-    + RddWork
     + RddSerde
     + serde_traitobject::Serialize
-    + serde_traitobject::Deserialize // + RddWideWork
+    + serde_traitobject::Deserialize
 {
     /// Fetch unique id for this rdd
     fn id(&self) -> RddId;
@@ -176,6 +180,8 @@ pub trait RddBase:
     fn rdd_type(&self) -> RddType;
 
     fn partitions_num(&self) -> usize;
+
+    fn work_fns(&self) -> RddWorkFns;
 }
 
 /// Magic incantaions to make `dyn RddBase` `Clone`
