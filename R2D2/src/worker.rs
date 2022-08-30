@@ -1,10 +1,14 @@
-use crate::r2d2::master_client::MasterClient;
-use crate::r2d2::{GetTaskRequest, TaskResultRequest};
 use crate::core::executor::Executor;
 use crate::core::graph::Graph;
-use crate::core::rdd::RddPartitionId;
+use crate::core::rdd::{RddId, RddPartitionId};
 use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
-use crate::MASTER_ADDR;
+use crate::r2d2::master_client::MasterClient;
+use crate::r2d2::{GetTaskRequest, TaskResultRequest};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;
 use tonic::Request;
@@ -25,14 +29,40 @@ async fn get_master_client(
         }
     }
 }
+type Cache = Arc<Mutex<HashMap<RddPartitionId, Vec<u8>>>>;
 
-/// TODO: refactor start?
-/// `start` DOES NOT RETURN
-///  PROCESS EXITS
-pub async fn start(id: u32) {
+async fn handle_connection(mut socket: TcpStream, cache: Cache) {
+    tokio::spawn(async move {
+        let rdd_id = socket.read_u32().await.expect("") as usize;
+        let partition_id = socket.read_u32().await.expect("") as usize;
+        let rdd_pid = RddPartitionId {
+            rdd_id: RddId(rdd_id),
+            partition_id,
+        };
+        let data = { cache.lock().unwrap().remove(&rdd_pid).unwrap() };
+        // TODO: if fail sending return data to cache.
+        if socket.write_all(&data).await.is_err() {
+            cache.lock().unwrap().insert(rdd_pid, data);
+        }
+    });
+}
+
+pub async fn start(id: usize, port: usize, master_addr: String) {
+    let cache: Cache = Arc::new(Mutex::new(HashMap::new()));
+    let cachecp = cache.clone();
+    tokio::spawn(async move {
+        let addr = format!("0.0.0.0:{port}");
+        let listener = TcpListener::bind(addr).await.expect("Worker couldn't bind");
+        loop {
+            if let Ok((socket, _)) = listener.accept().await {
+                handle_connection(socket, cachecp.clone()).await;
+            }
+        }
+    });
+
     // master may not be running yet
     println!("Worker #{id} starting");
-    let mut master_conn = get_master_client(format!("http://{}", MASTER_ADDR))
+    let mut master_conn = get_master_client(format!("http://{}", master_addr))
         .await
         .expect("Worker couldn't connect to master");
     let mut graph: Graph = Graph::default();
@@ -40,7 +70,7 @@ pub async fn start(id: u32) {
     let mut executor = Executor::new();
     loop {
         let get_task_response = match master_conn
-            .get_task(Request::new(GetTaskRequest { id }))
+            .get_task(Request::new(GetTaskRequest { id: id as u32 }))
             .await
         {
             Ok(r) => r.into_inner(),
@@ -66,13 +96,12 @@ pub async fn start(id: u32) {
                 break;
             }
         };
-        executor.resolve(
-            &graph,
-            RddPartitionId {
-                rdd_id: task.final_rdd,
-                partition_id: task.partition_id,
-            },
-        );
+        let rdd_pid = RddPartitionId {
+            rdd_id: task.final_rdd,
+            partition_id: task.partition_id,
+        };
+        executor.resolve(&graph, rdd_pid);
+
         let materialized_rdd_result = graph.get_rdd(task.final_rdd).unwrap().serialize_raw_data(
             executor
                 .cache
@@ -85,6 +114,10 @@ pub async fn start(id: u32) {
             serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
         };
         println!("worker={} got result={:?}", id, result);
+        cache
+            .lock()
+            .unwrap()
+            .insert(rdd_pid, result.serialized_task_result.clone());
         master_conn
             .post_task_result(Request::new(result))
             .await
@@ -93,16 +126,3 @@ pub async fn start(id: u32) {
     println!("\n\nWoker #{id} shutting down\n\n");
     std::process::exit(0);
 }
-
-// pub async fn task_finished() -> Result<(), Box<dyn std::error::Error>> {
-//     let master_addr = format!("http://{}", MASTER_ADDR);
-//     let response = MasterClient::connect(master_addr)
-//         .await?
-//         .task_finished(Request::new(Empty {}))
-//         .await?
-//         .into_inner();
-//     if !response.terminate {
-//         unimplemented!();
-//     }
-//     Ok(())
-// }
