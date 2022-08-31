@@ -36,6 +36,7 @@ impl<T> Copy for RddIndex<T> {}
 #[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct RddId(pub usize);
 impl RddId {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> RddId {
         static COUNTER: AtomicUsize = AtomicUsize::new(1);
         RddId(COUNTER.fetch_add(1, Ordering::Relaxed))
@@ -70,7 +71,7 @@ pub trait RddSerde {
     fn deserialize_raw_data(&self, serialized_data: Vec<u8>) -> Box<dyn Any + Send>;
 }
 
-pub trait RddWork {
+pub trait NarrowRddWork {
     /// This expects that all the deps have already been put inside the cache
     /// Ownership of results is passed back to context!
     // TODO: Is being generic over DataFetcher here fine???
@@ -87,21 +88,15 @@ trait TypedRddWideWork {
     fn partition_data(
         &self,
         input_partition: Vec<(Self::K, Self::V)>,
-    ) -> Vec<Vec<(Self::K, Self::V)>> {
-        unreachable!()
-    }
+    ) -> Vec<Vec<(Self::K, Self::V)>>;
     fn aggregate_inside_bucket(
         &self,
         bucket_data: Vec<(Self::K, Self::V)>,
-    ) -> Vec<(Self::K, Self::C)> {
-        unreachable!()
-    }
+    ) -> Vec<(Self::K, Self::C)>;
     fn aggregate_buckets(
         &self,
         buckets_aggr_data: Vec<Vec<(Self::K, Self::C)>>,
-    ) -> Vec<(Self::K, Self::C)> {
-        unreachable!()
-    }
+    ) -> Vec<(Self::K, Self::C)>;
 }
 
 // impl TypedRddWideWork {}
@@ -133,14 +128,14 @@ where
     T: TypedRddWideWork,
 {
     fn partition_data(&self, input_partition: Box<dyn Any + Send>) -> Vec<Box<dyn Any + Send>> {
-        Self::partition_data(&self, *input_partition.downcast().unwrap())
+        Self::partition_data(self, *input_partition.downcast().unwrap())
             .into_iter()
             .map(|x| -> Box<dyn Any + Send> { Box::new(x) })
             .collect()
     }
     fn aggregate_inside_bucket(&self, bucket_data: Box<dyn Any + Send>) -> Box<dyn Any + Send> {
         Box::new(Self::aggregate_inside_bucket(
-            &self,
+            self,
             *bucket_data.downcast().unwrap(),
         ))
     }
@@ -149,7 +144,7 @@ where
         buckets_aggr_data: Vec<Box<dyn Any + Send>>,
     ) -> Box<dyn Any + Send> {
         Box::new(Self::aggregate_buckets(
-            &self,
+            self,
             buckets_aggr_data
                 .into_iter()
                 .map(|x| *x.downcast().unwrap())
@@ -159,7 +154,7 @@ where
 }
 
 pub enum RddWorkFns<'a> {
-    Narrow(&'a dyn RddWork),
+    Narrow(&'a dyn NarrowRddWork),
     Wide(&'a dyn RddWideWork),
 }
 
@@ -206,11 +201,15 @@ impl Clone for Box<dyn RddBase> {
     }
 }
 
-/// methods for Rdd which are dependent on `Item` type
-trait TypedRdd {
+trait TypedNarrowRddWork {
     type Item: Data;
 
     fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item>;
+}
+
+/// methods for Rdd which are dependent on `Item` type
+trait TypedRdd {
+    type Item: Data;
 }
 
 impl<T> RddSerde for T
@@ -228,12 +227,12 @@ where
     }
 }
 
-impl<T> RddWork for T
+impl<T> NarrowRddWork for T
 where
-    T: TypedRdd,
+    T: TypedNarrowRddWork,
 {
     fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any + Send> {
-        Box::new(Self::work(&self, cache, partition_id))
+        Box::new(Self::work(self, cache, partition_id))
     }
 }
 

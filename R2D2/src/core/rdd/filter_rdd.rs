@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd, RddWorkFns};
+use super::{Data, RddBase, RddId, RddIndex, RddType, RddWorkFns, TypedRdd, TypedNarrowRddWork};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FilterRdd<T> {
@@ -16,6 +16,13 @@ where
     T: Data,
 {
     type Item = T;
+}
+
+impl<T> TypedNarrowRddWork for FilterRdd<T>
+where
+    T: Data,
+{
+    type Item = T;
 
     fn work(
         &self,
@@ -23,7 +30,7 @@ where
         partition_id: usize,
     ) -> Vec<Self::Item> {
         let v = cache.get_as(self.prev, partition_id).unwrap();
-        let g: Vec<T> = v.to_vec().into_iter().filter(self.filter_fn).collect();
+        let g: Vec<T> = v.iter().cloned().filter(self.filter_fn).collect();
         g
     }
 }

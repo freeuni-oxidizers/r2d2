@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::cache::ResultCache;
 
-use super::{Data, RddBase, RddId, RddType, TypedRdd, RddWorkFns};
+use super::{Data, RddBase, RddId, RddType, RddWorkFns, TypedRdd, TypedNarrowRddWork};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DataRdd<T> {
@@ -12,6 +12,13 @@ pub struct DataRdd<T> {
 }
 
 impl<T> TypedRdd for DataRdd<T>
+where
+    T: Data,
+{
+    type Item = T;
+}
+
+impl<T> TypedNarrowRddWork for DataRdd<T>
 where
     T: Data,
 {

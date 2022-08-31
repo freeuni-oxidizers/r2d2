@@ -14,6 +14,9 @@ lazy_static! {
 
 pub trait FunctionPointer: Copy + Send + Sync {
     fn as_usize(self) -> usize;
+    /// # Safety
+    ///
+    /// should only be called with numbers created from `as_usize`
     unsafe fn from_usize(fp: usize) -> Self;
 }
 
@@ -66,6 +69,7 @@ fnptr_impls_args! { A, B, C, D, E, F, G, H, I }
 fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J }
 fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J, K }
 fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J, K, L }
+
 
 impl<T, Ret> FunctionPointer for fn(&T) -> Ret {
     #[inline]

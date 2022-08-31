@@ -2,9 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::cache::ResultCache;
-
-use super::{Data, RddBase, RddId, RddIndex, RddType, TypedRdd, TypedRddWideWork, RddWorkFns};
+use super::{Data, RddBase, RddId, RddIndex, RddType, RddWorkFns, TypedRdd, TypedRddWideWork};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ShuffleRdd<K, V, C, P, A> {
@@ -45,10 +43,6 @@ where
     A: Aggregator,
 {
     type Item = (K, C);
-
-    fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item> {
-        unreachable!("ShuffleRdd is a wide transformation");
-    }
 }
 
 impl<K, V, C, P, A> TypedRddWideWork for ShuffleRdd<K, V, C, P, A>
@@ -111,7 +105,7 @@ where
 
     fn aggregate_buckets(
         &self,
-        buckets_aggr_data: Vec<Vec<(Self::K, Self::C)>>,
+        _buckets_aggr_data: Vec<Vec<(Self::K, Self::C)>>,
     ) -> Vec<(Self::K, Self::C)> {
         todo!()
     }
@@ -119,7 +113,7 @@ where
 
 impl<K, V, C, P, A> RddBase for ShuffleRdd<K, V, C, P, A>
 where
-    K: Data,
+    K: Data + Eq + Hash,
     V: Data,
     C: Data,
     P: Partitioner<Key = K>,
