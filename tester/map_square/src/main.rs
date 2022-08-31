@@ -15,21 +15,10 @@ async fn main() {
         vec![1, 2, 3, 4],
         vec![1, 2, 3, 4],
     ];
-    let rdd1 = spark.new_from_list(data);
-    let rdd2 = spark.map(rdd1, |x| (x * x) as i32);
-    let rdd2 = spark.filter(rdd2, |x| x % 2 == 0);
-    let result = spark.collect(rdd2).await;
-    println!("client code received result = {:?}", result);
-
-    let data = vec![
-        vec![1, 2, 3, 4],
-        vec![1, 2],
-        vec![1, 2, 3, 4],
-        vec![1, 2, 3, 4],
-    ];
-    let rdd1 = spark.new_from_list(data);
-    let rdd2 = spark.map(rdd1, |x| (x * x) as i32);
-    let rdd2 = spark.filter(rdd2, |x| x % 2 == 0);
-    let result = spark.collect(rdd2).await;
+    let rdd = spark.new_from_list(data);
+    let rdd = spark.filter(rdd, |x| x % 2 == 0);
+    let rdd = spark.map(rdd, |x| vec![x; x as usize]);
+    let rdd = spark.flat_map(rdd, |x| x);
+    let result = spark.collect(rdd).await;
     println!("client code received result = {:?}", result);
 }

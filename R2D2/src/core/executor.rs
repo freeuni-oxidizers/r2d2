@@ -47,6 +47,7 @@ impl Executor {
                     // print!("{}", id.partition_id)
                 }
                 RddType::Wide => {
+                    // TODO: fetch result from received buckets
                     let dep_partitions_num = graph.get_rdd(id.rdd_id).unwrap().partitions_num();
                     for partition_id in 0..dep_partitions_num {
                         self.resolve(
@@ -76,3 +77,34 @@ impl Executor {
         };
     }
 }
+
+
+// 1. at the end of task run first two steps of shuffle.
+//  * might need some changes to `Task` and `resolve`
+// 2. When `resolve` reaches final task from some previous Rdd, its result must be calculated from
+//    received buckets. so, we need to run third step of shuffle, when we reach that kind of rdd.
+//  * will need some changes in `resolve` and might need to indtrocude "bucket cache" in
+//  executor/worker
+// 3. Send buckets at the end of task to the target workers.
+// 4. Receiver of buckets on worker.
+// 5. dag scheduler:
+//    * find stages and their dependecies
+//    * track events and mark dependecies as completed
+//    * schedule stages which have all dependecies completed
+//    * randomize target workers which will store shuffle rdd partitions
+//    * optional: assign tasks to workers which have partitions cached
+
+// sc.cache(rdd);
+
+
+// 5. join
+
+
+
+
+
+
+
+
+
+

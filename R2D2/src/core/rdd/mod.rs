@@ -240,6 +240,8 @@ pub mod data_rdd;
 
 pub mod map_rdd;
 
+pub mod flat_map_rdd;
+
 pub mod filter_rdd;
 
 pub mod shuffle_rdd;

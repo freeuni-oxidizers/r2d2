@@ -4,7 +4,11 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{core::rdd::shuffle_rdd::Aggregator, master::MasterService, worker, Args, Config};
 
-use self::{group_by::GroupByAggregator, sum_by_key::SumByKeyAggregator};
+use self::{
+    group_by::GroupByAggregator,
+    partition_by::{DummyPartitioner, FinishingFlatten, MapUsingPartitioner},
+    sum_by_key::SumByKeyAggregator,
+};
 
 use super::{
     context::Context,
@@ -13,6 +17,7 @@ use super::{
     rdd::{
         data_rdd::DataRdd,
         filter_rdd::{FilterRdd, FnPtrFilterer},
+        flat_map_rdd::{FlatMapRdd, FnPtrFlatMapper},
         map_rdd::{FnPtrMapper, MapRdd, Mapper},
         shuffle_rdd::{Partitioner, ShuffleRdd},
         Data, RddId, RddIndex,
@@ -212,6 +217,61 @@ mod group_by {
 }
 
 impl Context for Spark {
+    fn shuffle<K, V, C, P, A>(
+        &mut self,
+        rdd: RddIndex<(K, V)>,
+        partitioner: P,
+        aggregator: A,
+    ) -> RddIndex<(K, C)>
+    where
+        K: Data + Eq + std::hash::Hash,
+        V: Data,
+        C: Data,
+        P: Partitioner<Key = K>,
+        A: Aggregator<Value = V, Combiner = C>,
+    {
+        let id = RddId::new();
+        let idx = RddIndex::new(id);
+        self.graph.store_new_rdd(ShuffleRdd {
+            idx,
+            prev: rdd,
+            partitioner,
+            aggregator,
+        });
+        idx
+    }
+
+    // (K, V) -> (K, Vec<V>)
+    fn group_by<K, V, P>(&mut self, rdd: RddIndex<(K, V)>, partitioner: P) -> RddIndex<(K, Vec<V>)>
+    where
+        K: Data + Eq + std::hash::Hash,
+        V: Data,
+        P: Partitioner<Key = K>,
+    {
+        self.shuffle(rdd, partitioner, GroupByAggregator::new())
+    }
+
+    // Rdd<T> -> Rdd<T>
+    // <T> -> <(partition_num, T)> -> <(partition_num, Vec<T>)> -> <T>
+    fn partition_by<T: Data, P>(&mut self, rdd: RddIndex<T>, partitioner: P) -> RddIndex<T>
+    where
+        P: Partitioner<Key = T>,
+    {
+        let rdd = self.map_with_state(rdd, MapUsingPartitioner::new(partitioner.clone()));
+        let rdd = self.group_by(rdd, DummyPartitioner(partitioner.partitions_num()));
+        self.flat_map_with_state(rdd, FinishingFlatten::new())
+    }
+
+    // (K, Add) -> (K, Add)
+    fn sum_by_key<K, V, P>(&mut self, rdd: RddIndex<(K, V)>, partitioner: P) -> RddIndex<(K, V)>
+    where
+        K: Data + Eq + std::hash::Hash,
+        V: Data + Add<Output = V> + Default,
+        P: Partitioner<Key = K>,
+    {
+        self.shuffle(rdd, partitioner, SumByKeyAggregator::new())
+    }
+
     fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(T) -> U) -> RddIndex<U> {
         let idx = RddIndex::new(RddId::new());
         let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
@@ -240,6 +300,35 @@ impl Context for Spark {
         idx
     }
 
+    fn flat_map<T: Data, U: Data, I: IntoIterator<Item = U> + Data>(
+        &mut self,
+        rdd: RddIndex<T>,
+        f: fn(T) -> I,
+    ) -> RddIndex<U> {
+        self.flat_map_with_state(rdd, FnPtrFlatMapper(f))
+    }
+
+    fn flat_map_with_state<
+        T: Data,
+        U: Data,
+        I: IntoIterator<Item = U>,
+        F: super::rdd::flat_map_rdd::FlatMapper<In = T, OutIterable = I>,
+    >(
+        &mut self,
+        rdd: RddIndex<T>,
+        flat_mapper: F,
+    ) -> RddIndex<U> {
+        let idx = RddIndex::new(RddId::new());
+        let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
+        self.graph.store_new_rdd(FlatMapRdd {
+            idx,
+            partitions_num,
+            prev: rdd,
+            flat_mapper,
+        });
+        idx
+    }
+
     fn filter<T: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> bool) -> RddIndex<T> {
         let idx = RddIndex::new(RddId::new());
         let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
@@ -261,69 +350,6 @@ impl Context for Spark {
         });
         idx
     }
-
-    fn group_by<K, V, P>(&mut self, rdd: RddIndex<(K, V)>, partitioner: P) -> RddIndex<(K, Vec<V>)>
-    where
-        K: Data + Eq + std::hash::Hash,
-        V: Data,
-        P: Partitioner<Key = K>,
-    {
-        self.shuffle(rdd, partitioner, GroupByAggregator::new())
-    }
-
-    // (K, usize) -> (K, usize)
-
-    // Rdd<T> -> Rdd<T>
-    // Rdd<T> -> Rdd<(T, ())> -> Rdd<(T, Vec<()>)> -> Rdd<T>
-    // [1,1,1,2] -> [1,1,1,2]
-    // [1,1,1,2] -> [(1, 1), (1, 1), (1, 1), (2, 1)] -> [(1, 3), (2, 1)] -> [1, 1, 1, 2]
-
-    fn shuffle<K, V, C, P, A>(
-        &mut self,
-        rdd: RddIndex<(K, V)>,
-        partitioner: P,
-        aggregator: A,
-    ) -> RddIndex<(K, C)>
-    where
-        K: Data + Eq + std::hash::Hash,
-        V: Data,
-        C: Data,
-        P: Partitioner<Key = K>,
-        A: Aggregator<Value = V, Combiner = C>,
-    {
-        let id = RddId::new();
-        let idx = RddIndex::new(id);
-        self.graph.store_new_rdd(ShuffleRdd {
-            idx,
-            prev: rdd,
-            partitioner,
-            aggregator,
-        });
-        idx
-    }
-
-    fn sum_by_key<K, V, P>(&mut self, rdd: RddIndex<(K, V)>, partitioner: P) -> RddIndex<(K, V)>
-    where
-        K: Data + Eq + std::hash::Hash,
-        V: Data + Add<Output = V> + Default,
-        P: Partitioner<Key = K>,
-    {
-        self.shuffle(rdd, partitioner, SumByKeyAggregator::new())
-    }
-
-    // Rdd<T> -> Rdd<T>
-    // <T> -> <(partition_num, T)> -> <(partition_num, Vec<T>)> -> <(partition_num, Vec<T>>
-    // fn partition_by<T, P>(&mut self, rdd: RddIndex<T>, partitioner: P) -> RddIndex<T>
-    // where
-    //     T: Data,
-    //     P: Partitioner<Key = T>,
-    // {
-    //     // let rdd = self.map(rdd, |x| (x.clone(), 1));
-    //     // let summed = self.sum_by_key(rdd, partitioner);
-    //     let rdd = self.map_with_state(rdd, MapUsingPartitioner::new(partitioner));
-    //     let rdd = self.group_by(rdd, DummyPartitioner(partitioner.partitions_num()));
-    //
-    // }
 }
 
 mod partition_by {
@@ -331,7 +357,9 @@ mod partition_by {
 
     use serde::{Deserialize, Serialize};
 
-    use crate::core::rdd::{map_rdd::Mapper, shuffle_rdd::Partitioner, Data};
+    use crate::core::rdd::{
+        flat_map_rdd::FlatMapper, map_rdd::Mapper, shuffle_rdd::Partitioner, Data,
+    };
 
     #[derive(Serialize, Deserialize, Clone)]
     pub struct MapUsingPartitioner<T, P> {
@@ -375,6 +403,30 @@ mod partition_by {
 
         fn partititon_by(&self, key: &Self::Key) -> usize {
             *key
+        }
+    }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct FinishingFlatten<T> {
+        #[serde(skip)]
+        _value: PhantomData<T>,
+    }
+
+    impl<T> FinishingFlatten<T> {
+        pub fn new() -> Self {
+            Self {
+                _value: PhantomData,
+            }
+        }
+    }
+
+    impl<T: Data> FlatMapper for FinishingFlatten<T> {
+        type In = (usize, Vec<T>);
+
+        type OutIterable = Vec<T>;
+
+        fn map(&self, v: Self::In) -> Self::OutIterable {
+            v.1
         }
     }
 }
