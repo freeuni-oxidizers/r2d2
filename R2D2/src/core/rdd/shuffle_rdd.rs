@@ -102,18 +102,31 @@ where
                 )
             })
             .collect()
-
-        // println!("{:?}", bucket_by_keys);
-        // for elem in bucket_data.into_iter() {
-        //     aggr.merge_value(elem.1, combiner)
-        // }
     }
 
     fn aggregate_buckets(
         &self,
         buckets_aggr_data: Vec<Vec<(Self::K, Self::C)>>,
     ) -> Vec<(Self::K, Self::C)> {
-        todo!()
+        let aggr = self.aggregator.as_ref().unwrap();
+
+        let mut combiners_by_keys = HashMap::new();
+        for bucket_combiners in buckets_aggr_data.into_iter() {
+            for (k, c) in bucket_combiners.into_iter() {
+                combiners_by_keys.entry(k).or_insert_with(Vec::new).push(c)
+            }
+        }
+        combiners_by_keys
+            .into_iter()
+            .map(|x| {
+                (
+                    x.0,
+                    x.1.into_iter().fold(aggr.create_combiner(), |acc1, acc2| {
+                        aggr.merge_combiners(acc1, acc2)
+                    }),
+                )
+            })
+            .collect()
     }
 }
 
