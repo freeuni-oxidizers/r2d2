@@ -1,26 +1,47 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Data, RddBase, RddId, RddIndex, RddType, RddWorkFns, TypedRdd, TypedNarrowRddWork};
+use super::{Data, RddBase, RddId, RddIndex, RddType, RddWorkFns, TypedNarrowRddWork, TypedRdd};
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct FilterRdd<T> {
-    pub id: RddId,
-    pub partitions_num: usize,
-    pub prev: RddIndex<T>,
-    #[serde(with = "serde_fp")]
-    pub filter_fn: fn(&T) -> bool,
+pub trait Filterer: Data {
+    type Item: Data;
+
+    fn predicate(&self, v: &Self::Item) -> bool;
 }
 
-impl<T> TypedRdd for FilterRdd<T>
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FnPtrFilterer<T>(#[serde(with = "serde_fp")] pub fn(&T) -> bool);
+
+impl<T> Filterer for FnPtrFilterer<T>
 where
     T: Data,
 {
     type Item = T;
+
+    fn predicate(&self, v: &Self::Item) -> bool {
+        self.0(v)
+    }
 }
 
-impl<T> TypedNarrowRddWork for FilterRdd<T>
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FilterRdd<T, F> {
+    pub idx: RddIndex<T>,
+    pub partitions_num: usize,
+    pub prev: RddIndex<T>,
+    pub filterer: F,
+}
+
+impl<T, F> TypedRdd for FilterRdd<T, F>
 where
     T: Data,
+    F: Filterer<Item = T>,
+{
+    type Item = T;
+}
+
+impl<T, F> TypedNarrowRddWork for FilterRdd<T, F>
+where
+    T: Data,
+    F: Filterer<Item = T>,
 {
     type Item = T;
 
@@ -30,17 +51,22 @@ where
         partition_id: usize,
     ) -> Vec<Self::Item> {
         let v = cache.get_as(self.prev, partition_id).unwrap();
-        let g: Vec<T> = v.iter().cloned().filter(self.filter_fn).collect();
+        let g: Vec<T> = v
+            .into_iter()
+            .cloned()
+            .filter(|v| self.filterer.predicate(v))
+            .collect();
         g
     }
 }
 
-impl<T> RddBase for FilterRdd<T>
+impl<T, F> RddBase for FilterRdd<T, F>
 where
     T: Data,
+    F: Filterer<Item = T>,
 {
     fn id(&self) -> RddId {
-        self.id
+        self.idx.id
     }
 
     fn deps(&self) -> Vec<RddId> {

@@ -1,14 +1,22 @@
-use std::{fmt::Debug, process::exit};
+use std::{fmt::Debug, ops::Add, process::exit};
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{master::MasterService, worker, Args, Config};
+use crate::{core::rdd::shuffle_rdd::Aggregator, master::MasterService, worker, Args, Config};
+
+use self::{group_by::GroupByAggregator, sum_by_key::SumByKeyAggregator};
 
 use super::{
     context::Context,
     dag_scheduler::{DagScheduler, Job},
     graph::Graph,
-    rdd::{data_rdd::DataRdd, filter_rdd::FilterRdd, map_rdd::MapRdd, Data, RddId, RddIndex},
+    rdd::{
+        data_rdd::DataRdd,
+        filter_rdd::{FilterRdd, FnPtrFilterer},
+        map_rdd::{FnPtrMapper, MapRdd, Mapper},
+        shuffle_rdd::{Partitioner, ShuffleRdd},
+        Data, RddId, RddIndex,
+    },
     task_scheduler::{DagMessage, TaskScheduler, WorkerEvent, WorkerMessage},
 };
 
@@ -48,7 +56,8 @@ impl Spark {
 
         if !args.master {
             let jh = tokio::spawn(async move {
-                worker::start(args.id, args.port, config.master_addr.clone()).await; // this fn call never returns
+                worker::start(args.id, args.port, config.master_addr.clone()).await;
+                // this fn call never returns
             });
             jh.await.unwrap();
             exit(0);
@@ -100,39 +109,272 @@ impl Spark {
             .collect()
     }
 }
+mod sum_by_key {
+    use std::{marker::PhantomData, ops::Add};
+
+    use serde::{Deserialize, Serialize};
+
+    use crate::core::rdd::{shuffle_rdd::Aggregator, Data};
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct SumByKeyAggregator<V> {
+        #[serde(skip)]
+        _value: PhantomData<V>,
+    }
+
+    impl<V> SumByKeyAggregator<V> {
+        pub fn new() -> Self {
+            SumByKeyAggregator {
+                _value: PhantomData,
+            }
+        }
+    }
+
+    impl<V> Default for SumByKeyAggregator<V> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl<V: Data + Add<Output = V> + Default> Aggregator for SumByKeyAggregator<V> {
+        type Value = V;
+
+        type Combiner = V;
+
+        fn create_combiner(&self) -> Self::Combiner {
+            V::default()
+        }
+
+        fn merge_value(&self, value: Self::Value, combiner: Self::Combiner) -> Self::Combiner {
+            combiner + value
+        }
+
+        fn merge_combiners(
+            &self,
+            combiner1: Self::Combiner,
+            combiner2: Self::Combiner,
+        ) -> Self::Combiner {
+            combiner1 + combiner2
+        }
+    }
+}
+
+mod group_by {
+    use std::marker::PhantomData;
+
+    use serde::{Deserialize, Serialize};
+
+    use crate::core::rdd::{shuffle_rdd::Aggregator, Data};
+
+    #[derive(Clone, Serialize, Deserialize)]
+    pub struct GroupByAggregator<V> {
+        #[serde(skip)]
+        _value: PhantomData<V>,
+    }
+
+    impl<V> GroupByAggregator<V> {
+        pub fn new() -> Self {
+            GroupByAggregator {
+                _value: PhantomData,
+            }
+        }
+    }
+
+    impl<V> Default for GroupByAggregator<V> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl<V: Data> Aggregator for GroupByAggregator<V> {
+        type Value = V;
+
+        type Combiner = Vec<V>;
+
+        fn create_combiner(&self) -> Self::Combiner {
+            Vec::new()
+        }
+
+        fn merge_value(&self, value: Self::Value, mut combiner: Self::Combiner) -> Self::Combiner {
+            combiner.push(value);
+            combiner
+        }
+
+        fn merge_combiners(
+            &self,
+            mut combiner1: Self::Combiner,
+            combiner2: Self::Combiner,
+        ) -> Self::Combiner {
+            combiner1.extend(combiner2);
+            combiner1
+        }
+    }
+}
 
 impl Context for Spark {
-    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> U) -> RddIndex<U> {
-        let id = RddId::new();
+    fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(T) -> U) -> RddIndex<U> {
+        let idx = RddIndex::new(RddId::new());
         let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
         self.graph.store_new_rdd(MapRdd {
-            id,
+            idx,
             partitions_num,
             prev: rdd,
-            map_fn: f,
+            mapper: FnPtrMapper(f),
         });
-        RddIndex::new(id)
+        idx
+    }
+
+    fn map_with_state<T: Data, U: Data, M: Mapper<In = T, Out = U>>(
+        &mut self,
+        rdd: RddIndex<T>,
+        mapper: M,
+    ) -> RddIndex<U> {
+        let idx = RddIndex::new(RddId::new());
+        let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
+        self.graph.store_new_rdd(MapRdd {
+            idx,
+            partitions_num,
+            prev: rdd,
+            mapper,
+        });
+        idx
     }
 
     fn filter<T: Data>(&mut self, rdd: RddIndex<T>, f: fn(&T) -> bool) -> RddIndex<T> {
-        let id = RddId::new();
+        let idx = RddIndex::new(RddId::new());
         let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
         self.graph.store_new_rdd(FilterRdd {
-            id,
+            idx,
             partitions_num,
             prev: rdd,
-            filter_fn: f,
+            filterer: FnPtrFilterer(f),
         });
-        RddIndex::new(id)
+        idx
     }
 
     fn new_from_list<T: Data + Clone>(&mut self, data: Vec<Vec<T>>) -> RddIndex<T> {
-        let id = RddId::new();
+        let idx = RddIndex::new(RddId::new());
         self.graph.store_new_rdd(DataRdd {
-            id,
+            idx,
             partitions_num: data.len(),
             data,
         });
-        RddIndex::new(id)
+        idx
+    }
+
+    fn group_by<K, V, P>(&mut self, rdd: RddIndex<(K, V)>, partitioner: P) -> RddIndex<(K, Vec<V>)>
+    where
+        K: Data + Eq + std::hash::Hash,
+        V: Data,
+        P: Partitioner<Key = K>,
+    {
+        self.shuffle(rdd, partitioner, GroupByAggregator::new())
+    }
+
+    // (K, usize) -> (K, usize)
+
+    // Rdd<T> -> Rdd<T>
+    // Rdd<T> -> Rdd<(T, ())> -> Rdd<(T, Vec<()>)> -> Rdd<T>
+    // [1,1,1,2] -> [1,1,1,2]
+    // [1,1,1,2] -> [(1, 1), (1, 1), (1, 1), (2, 1)] -> [(1, 3), (2, 1)] -> [1, 1, 1, 2]
+
+    fn shuffle<K, V, C, P, A>(
+        &mut self,
+        rdd: RddIndex<(K, V)>,
+        partitioner: P,
+        aggregator: A,
+    ) -> RddIndex<(K, C)>
+    where
+        K: Data + Eq + std::hash::Hash,
+        V: Data,
+        C: Data,
+        P: Partitioner<Key = K>,
+        A: Aggregator<Value = V, Combiner = C>,
+    {
+        let id = RddId::new();
+        let idx = RddIndex::new(id);
+        self.graph.store_new_rdd(ShuffleRdd {
+            idx,
+            prev: rdd,
+            partitioner,
+            aggregator,
+        });
+        idx
+    }
+
+    fn sum_by_key<K, V, P>(&mut self, rdd: RddIndex<(K, V)>, partitioner: P) -> RddIndex<(K, V)>
+    where
+        K: Data + Eq + std::hash::Hash,
+        V: Data + Add<Output = V> + Default,
+        P: Partitioner<Key = K>,
+    {
+        self.shuffle(rdd, partitioner, SumByKeyAggregator::new())
+    }
+
+    // Rdd<T> -> Rdd<T>
+    // <T> -> <(partition_num, T)> -> <(partition_num, Vec<T>)> -> <(partition_num, Vec<T>>
+    // fn partition_by<T, P>(&mut self, rdd: RddIndex<T>, partitioner: P) -> RddIndex<T>
+    // where
+    //     T: Data,
+    //     P: Partitioner<Key = T>,
+    // {
+    //     // let rdd = self.map(rdd, |x| (x.clone(), 1));
+    //     // let summed = self.sum_by_key(rdd, partitioner);
+    //     let rdd = self.map_with_state(rdd, MapUsingPartitioner::new(partitioner));
+    //     let rdd = self.group_by(rdd, DummyPartitioner(partitioner.partitions_num()));
+    //
+    // }
+}
+
+mod partition_by {
+    use std::marker::PhantomData;
+
+    use serde::{Deserialize, Serialize};
+
+    use crate::core::rdd::{map_rdd::Mapper, shuffle_rdd::Partitioner, Data};
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct MapUsingPartitioner<T, P> {
+        partitioner: P,
+        #[serde(skip)]
+        _value: PhantomData<T>,
+    }
+
+    impl<T, P> MapUsingPartitioner<T, P> {
+        pub fn new(partitioner: P) -> Self {
+            Self {
+                partitioner,
+                _value: PhantomData,
+            }
+        }
+    }
+
+    impl<T, P> Mapper for MapUsingPartitioner<T, P>
+    where
+        T: Data,
+        P: Partitioner<Key = T>,
+    {
+        type In = T;
+
+        type Out = (usize, T);
+
+        fn map(&self, v: Self::In) -> Self::Out {
+            (self.partitioner.partititon_by(&v), v)
+        }
+    }
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct DummyPartitioner(pub usize);
+
+    impl Partitioner for DummyPartitioner {
+        type Key = usize;
+
+        fn partitions_num(&self) -> usize {
+            self.0
+        }
+
+        fn partititon_by(&self, key: &Self::Key) -> usize {
+            *key
+        }
     }
 }

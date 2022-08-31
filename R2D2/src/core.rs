@@ -8,7 +8,7 @@ pub mod context;
 
 pub mod executor;
 
-mod dag_scheduler;
+pub mod dag_scheduler;
 
 pub mod task_scheduler;
 

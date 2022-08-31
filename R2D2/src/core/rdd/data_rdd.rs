@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::cache::ResultCache;
 
-use super::{Data, RddBase, RddId, RddType, RddWorkFns, TypedRdd, TypedNarrowRddWork};
+use super::{Data, RddBase, RddId, RddType, RddWorkFns, TypedRdd, TypedNarrowRddWork, RddIndex};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DataRdd<T> {
-    pub id: RddId,
+    pub idx: RddIndex<T>,
     pub partitions_num: usize,
     pub data: Vec<Vec<T>>,
 }
@@ -34,7 +34,7 @@ where
     T: Data + Clone,
 {
     fn id(&self) -> RddId {
-        self.id
+        self.idx.id
     }
 
     fn deps(&self) -> Vec<RddId> {

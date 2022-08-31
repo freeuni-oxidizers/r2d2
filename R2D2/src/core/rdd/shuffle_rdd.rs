@@ -8,17 +8,18 @@ use super::{Data, RddBase, RddId, RddIndex, RddType, RddWorkFns, TypedRdd, Typed
 pub struct ShuffleRdd<K, V, C, P, A> {
     pub idx: RddIndex<(K, C)>,
     pub prev: RddIndex<(K, V)>,
-    pub partitions_num: usize,
     pub partitioner: P,
-    pub aggregator: Option<A>,
+    pub aggregator: A,
 }
 
+// maybe this should have num_partitions?
 pub trait Partitioner: Data {
     type Key: Data;
+    fn partitions_num(&self) -> usize;
     fn partititon_by(&self, key: &Self::Key) -> usize;
 }
 
-// (V) -> Acc
+// () -> Acc
 // (V, Acc) -> Acc
 // (Acc, Acc) -> Acc
 pub trait Aggregator: Data {
@@ -36,11 +37,11 @@ pub trait Aggregator: Data {
 
 impl<K, V, C, P, A> TypedRdd for ShuffleRdd<K, V, C, P, A>
 where
-    K: Data,
+    K: Data + Eq + Hash,
     V: Data,
     C: Data,
-    P: Partitioner,
-    A: Aggregator,
+    P: Partitioner<Key = K>,
+    A: Aggregator<Value = V, Combiner = C>,
 {
     type Item = (K, C);
 }
@@ -62,7 +63,7 @@ where
         input_partition: Vec<(Self::K, Self::V)>,
     ) -> Vec<Vec<(Self::K, Self::V)>> {
         let mut result = Vec::new();
-        for _ in 0..self.partitions_num {
+        for _ in 0..self.partitions_num() {
             result.push(Vec::new());
         }
 
@@ -78,8 +79,7 @@ where
         &self,
         bucket_data: Vec<(Self::K, Self::V)>,
     ) -> Vec<(Self::K, Self::C)> {
-        // TODO: handle aggreagte = Null case (repartition e. g.)
-        let aggr = self.aggregator.as_ref().unwrap();
+        let aggr = &self.aggregator;
 
         let mut bucket_by_keys = HashMap::new();
         for (k, v) in bucket_data.into_iter() {
@@ -100,9 +100,9 @@ where
 
     fn aggregate_buckets(
         &self,
-        _buckets_aggr_data: Vec<Vec<(Self::K, Self::C)>>,
+        buckets_aggr_data: Vec<Vec<(Self::K, Self::C)>>,
     ) -> Vec<(Self::K, Self::C)> {
-        let aggr = self.aggregator.as_ref().unwrap();
+        let aggr = &self.aggregator;
 
         let mut combiners_by_keys = HashMap::new();
         for bucket_combiners in buckets_aggr_data.into_iter() {
@@ -145,7 +145,7 @@ where
     }
 
     fn partitions_num(&self) -> usize {
-        self.partitions_num
+        self.partitioner.partitions_num()
     }
 
     fn work_fns(&self) -> RddWorkFns {

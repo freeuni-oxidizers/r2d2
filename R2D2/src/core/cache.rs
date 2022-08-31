@@ -25,6 +25,17 @@ impl ResultCache {
             .map(|b| b.downcast_ref::<Vec<T>>().unwrap().as_slice())
     }
 
+    // FIXME: this needs &mut self 
+    pub fn take_as<T: Data>(&self, rdd: RddIndex<T>, partition_id: usize) -> Option<Vec<T>> {
+        // self.data
+        //     .remove(&RddPartitionId {
+        //         rdd_id: rdd.id,
+        //         partition_id,
+        //     })
+        //     .map(|b| *b.downcast::<Vec<T>>().unwrap())
+        self.get_as(rdd, partition_id).map(|v|v.to_vec())
+    }
+
     pub fn get_as_any(&self, rdd_id: RddId, partition_id: usize) -> Option<&(dyn Any + Send)> {
         self.data
             .get(&RddPartitionId {
