@@ -1,4 +1,4 @@
-use crate::core::rdd::{RddType, RddWorkFns};
+use crate::core::rdd::{shuffle_rdd::Aggregator, RddType, RddWorkFns};
 
 use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId};
 
@@ -11,6 +11,7 @@ pub struct Executor {
     /// Cache which is used to store partial results of shuffle operations
     // TODO: buckets
     pub takeout: ResultCache,
+    pub received_buckets: ResultCache,
 }
 
 impl Default for Executor {
@@ -26,6 +27,7 @@ impl Executor {
             takeout: ResultCache::default(),
         }
     }
+    // pub fn resolve
     pub fn resolve(&mut self, graph: &Graph, id: RddPartitionId) {
         assert!(graph.contains(id.rdd_id), "id not found in context");
         if self.cache.has(id) {
@@ -33,51 +35,34 @@ impl Executor {
         }
 
         let rdd_type = graph.get_rdd(id.rdd_id).unwrap().rdd_type();
-        // First resolve all the deps
-        for dep in graph.get_rdd(id.rdd_id).unwrap().deps() {
-            match rdd_type {
-                RddType::Narrow => {
-                    self.resolve(
-                        graph,
-                        RddPartitionId {
-                            rdd_id: dbg!(dep),
-                            partition_id: dbg!(id.partition_id),
-                        },
-                    );
-                    // print!("{}", id.partition_id)
-                }
-                RddType::Wide => {
-                    // TODO: fetch result from received buckets
-                    let dep_partitions_num = graph.get_rdd(id.rdd_id).unwrap().partitions_num();
-                    for partition_id in 0..dep_partitions_num {
-                        self.resolve(
-                            graph,
-                            RddPartitionId {
-                                rdd_id: dep,
-                                partition_id,
-                            },
-                        );
-                    }
-                }
-            }
-            self.resolve(
+        match rdd_type {
+            RddType::Narrow(dep_rdd) => self.resolve(
                 graph,
                 RddPartitionId {
-                    rdd_id: dep,
+                    rdd_id: dep_rdd,
                     partition_id: id.partition_id,
                 },
-            );
-        }
+            ),
+            _ => {}
+        };
+        // First resolve all the deps
         match graph.get_rdd(id.rdd_id).unwrap().work_fns() {
             RddWorkFns::Narrow(narrow_work) => {
                 let res = narrow_work.work(&self.cache, id.partition_id);
                 self.cache.put(id, res);
             }
-            RddWorkFns::Wide(_) => todo!(),
+            RddWorkFns::Wide(aggr_fns) => {
+                let partitions_num = graph.get_rdd(id.rdd_id).unwrap().partitions_num();
+                // TODO: error handling - if bucket is missing (is None)
+                let buckets: Vec<_> = (0..partitions_num)
+                    .map(|i| self.received_buckets.take_as_any(id.rdd_id, i).unwrap())
+                    .collect();
+                let wides_result = aggr_fns.aggregate_buckets(buckets);
+                self.cache.put(id, wides_result);
+            }
         };
     }
 }
-
 
 // 1. at the end of task run first two steps of shuffle.
 //  * might need some changes to `Task` and `resolve`
@@ -96,15 +81,4 @@ impl Executor {
 
 // sc.cache(rdd);
 
-
 // 5. join
-
-
-
-
-
-
-
-
-
-

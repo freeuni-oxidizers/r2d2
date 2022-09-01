@@ -60,8 +60,8 @@ impl<T> Data for T where T: Serialize + DeserializeOwned + Clone + Send + Sync +
 // }
 
 pub enum RddType {
-    Narrow,
-    Wide,
+    Narrow(RddId),
+    Wide(RddId),
 }
 
 pub trait RddSerde {
