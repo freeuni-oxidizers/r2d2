@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::{any::Any, collections::HashMap};
 
 use crate::core::rdd::{shuffle_rdd::Aggregator, Dependency, RddWideWork, RddWorkFns};
 
@@ -13,7 +13,7 @@ pub struct Executor {
     /// Cache which is used to store partial results of shuffle operations
     // TODO: buckets
     pub takeout: ResultCache,
-    pub received_buckets: ResultCache,
+    pub received_buckets: HashMap<RddPartitionId, Vec<Vec<u8>>>,
 }
 
 impl Default for Executor {
@@ -27,7 +27,7 @@ impl Executor {
         Self {
             cache: ResultCache::default(),
             takeout: ResultCache::default(),
-            received_buckets: ResultCache::default(),
+            received_buckets: HashMap::default(),
         }
     }
     // pub fn resolve
@@ -49,17 +49,21 @@ impl Executor {
             _ => {}
         };
         // First resolve all the deps
-       
+
         match graph.get_rdd(id.rdd_id).unwrap().work_fns() {
             RddWorkFns::Narrow(narrow_work) => {
                 let res = narrow_work.work(&self.cache, id.partition_id);
                 self.cache.put(id, res);
             }
             RddWorkFns::Wide(aggr_fns) => {
-                let partitions_num = graph.get_rdd(id.rdd_id).unwrap().partitions_num();
                 // TODO: error handling - if bucket is missing (is None)
-                let buckets: Vec<_> = (0..partitions_num)
-                    .map(|i| self.received_buckets.take_as_any(id.rdd_id, i).unwrap())
+                let rdd = graph.get_rdd(id.rdd_id).unwrap();
+                let buckets = self
+                    .received_buckets
+                    .remove(&id)
+                    .unwrap()
+                    .into_iter()
+                    .map(|x| rdd.deserialize_raw_data(x))
                     .collect();
                 let wides_result = aggr_fns.aggregate_buckets(buckets);
                 self.cache.put(id, wides_result);
@@ -67,7 +71,7 @@ impl Executor {
         };
     }
 
-    fn resolve_task(&mut self, graph: &Graph, task: Task) -> Vec<Box<dyn Any + Send>> {
+    fn resolve_task(&mut self, graph: &Graph, task: Task) -> Vec<Vec<u8>> {
         assert!(graph.contains(task.final_rdd), "id not found in context");
         // TODO: check if buckets are already on the disk and return without futher computations
 
@@ -81,13 +85,15 @@ impl Executor {
                 },
             );
             // perform bucketisation of final data
-            if let RddWorkFns::Wide(work) = graph.get_rdd(task.final_rdd).unwrap().work_fns() {
+            let rdd = graph.get_rdd(task.final_rdd).unwrap();
+            if let RddWorkFns::Wide(work) = rdd.work_fns() {
                 let buckets =
                     work.partition_data(self.cache.take_as_any(dep_id, task.partition_id).unwrap());
 
                 let aggred_buckets: Vec<_> = buckets
                     .into_iter()
                     .map(|bucket| work.aggregate_inside_bucket(bucket))
+                    .map(|aggred_bucket| rdd.serialize_raw_data(&aggred_bucket))
                     .collect();
 
                 return aggred_buckets;
