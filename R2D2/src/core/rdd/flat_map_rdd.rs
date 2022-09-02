@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::cache::ResultCache;
 
-use super::{Data, RddBase, RddId, RddIndex, RddType, RddWorkFns, TypedNarrowRddWork, TypedRdd};
+use super::{Data, Dependency, RddBase, RddId, RddIndex, RddWorkFns, TypedNarrowRddWork, TypedRdd};
 
 /// Imagine you have Rdd<Vec<T>> and want to get Rdd<T>. In this case each map would take element
 /// which is Vec<T> from previous Rdd, so In=Vec<T>, and would output something that is iterable
@@ -100,12 +100,8 @@ where
         self.idx.id
     }
 
-    fn deps(&self) -> Vec<RddId> {
-        vec![self.prev.id]
-    }
-
-    fn rdd_type(&self) -> super::RddType {
-        RddType::Narrow
+    fn rdd_dependency(&self) -> super::Dependency {
+        Dependency::Narrow(self.prev.id)
     }
 
     fn partitions_num(&self) -> usize {
