@@ -59,9 +59,10 @@ impl<T> Data for T where T: Serialize + DeserializeOwned + Clone + Send + Sync +
 //     fn post_result<T>(&mut self, idx: RddIndex<T>, partition_id: usize, data: Vec<T>);
 // }
 
-pub enum RddType {
-    Narrow,
-    Wide,
+pub enum Dependency {
+    Narrow(RddId),
+    Wide(RddId),
+    No,
 }
 
 pub trait RddSerde {
@@ -170,9 +171,7 @@ pub trait RddBase:
     fn id(&self) -> RddId;
 
     /// rdd dependencies
-    fn deps(&self) -> Vec<RddId>;
-
-    fn rdd_type(&self) -> RddType;
+    fn rdd_dependency(&self) -> Dependency;
 
     fn partitions_num(&self) -> usize;
 

@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Data, RddBase, RddId, RddIndex, RddType, RddWorkFns, TypedRdd, TypedRddWideWork};
+use super::{Data, Dependency, RddBase, RddId, RddIndex, RddWorkFns, TypedRdd, TypedRddWideWork};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ShuffleRdd<K, V, C, P, A> {
@@ -136,12 +136,8 @@ where
         self.idx.id
     }
 
-    fn deps(&self) -> Vec<RddId> {
-        vec![self.prev.id]
-    }
-
-    fn rdd_type(&self) -> super::RddType {
-        RddType::Wide
+    fn rdd_dependency(&self) -> super::Dependency {
+        Dependency::Wide(self.prev.id)
     }
 
     fn partitions_num(&self) -> usize {

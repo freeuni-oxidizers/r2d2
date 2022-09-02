@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Data, RddBase, RddId, RddIndex, RddType, RddWorkFns, TypedNarrowRddWork, TypedRdd};
+use super::{Data, Dependency, RddBase, RddId, RddIndex, RddWorkFns, TypedNarrowRddWork, TypedRdd};
 
 pub trait Filterer: Data {
     type Item: Data;
@@ -69,12 +69,8 @@ where
         self.idx.id
     }
 
-    fn deps(&self) -> Vec<RddId> {
-        vec![self.prev.id]
-    }
-
-    fn rdd_type(&self) -> RddType {
-        RddType::Narrow
+    fn rdd_dependency(&self) -> Dependency {
+        Dependency::Narrow(self.prev.id)
     }
 
     fn partitions_num(&self) -> usize {
