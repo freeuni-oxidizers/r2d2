@@ -25,6 +25,7 @@ impl Executor {
         Self {
             cache: ResultCache::default(),
             takeout: ResultCache::default(),
+            received_buckets: ResultCache::default(),
         }
     }
     // pub fn resolve
