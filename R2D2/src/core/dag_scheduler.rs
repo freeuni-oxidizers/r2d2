@@ -53,6 +53,7 @@ impl DagScheduler {
                     partition_id,
                     num_partitions: target_rdd.partitions_num(),
                     preffered_worker_id: partition_id % self.n_workers,
+                    target_workers: todo!(),
                 })
             }
             let graph = job.graph.clone();

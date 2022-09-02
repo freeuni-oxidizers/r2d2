@@ -3,7 +3,10 @@ use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use super::{graph::Graph, rdd::{RddId, RddPartitionId}};
+use super::{
+    graph::Graph,
+    rdd::{RddId, RddPartitionId},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FailReason {
@@ -118,4 +121,5 @@ pub struct Task {
     pub partition_id: usize,
     pub num_partitions: usize,
     pub preffered_worker_id: usize,
+    pub target_workers: Vec<usize>,
 }
