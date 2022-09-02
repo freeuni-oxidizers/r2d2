@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use super::{graph::Graph, rdd::RddId};
+use super::{graph::Graph, rdd::{RddId, RddPartitionId}};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FailReason {
@@ -13,6 +13,8 @@ pub enum FailReason {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkerEvent {
     Success(Task, Vec<u8>),
+    // worker_id, partition_id
+    BucketReceived(usize, RddPartitionId),
     Fail(FailReason),
 }
 

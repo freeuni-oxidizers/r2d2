@@ -1,6 +1,6 @@
 use clap::Parser;
 use R2D2::{
-    core::{context::Context, spark::Spark},
+    core::{context::Context, spark::{Spark, hash_partitioner::HashPartitioner}},
     Args,
 };
 
@@ -19,6 +19,8 @@ async fn main() {
     let rdd = spark.filter(rdd, |x| x % 2 == 0);
     let rdd = spark.map(rdd, |x| vec![x; x as usize]);
     let rdd = spark.flat_map(rdd, |x| x);
+    let rdd = spark.map(rdd, |x| (x, 1));
+    // let rdd = spark.sum_by_key(rdd, HashPartitioner::new(5));
     let result = spark.collect(rdd).await;
     println!("client code received result = {:?}", result);
 }

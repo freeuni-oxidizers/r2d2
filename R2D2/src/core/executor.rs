@@ -49,6 +49,7 @@ impl Executor {
             _ => {}
         };
         // First resolve all the deps
+       
         match graph.get_rdd(id.rdd_id).unwrap().work_fns() {
             RddWorkFns::Narrow(narrow_work) => {
                 let res = narrow_work.work(&self.cache, id.partition_id);
