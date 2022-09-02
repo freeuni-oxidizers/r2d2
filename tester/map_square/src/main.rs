@@ -20,7 +20,7 @@ async fn main() {
     let rdd = spark.map(rdd, |x| vec![x; x as usize]);
     let rdd = spark.flat_map(rdd, |x| x);
     let rdd = spark.map(rdd, |x| (x, 1));
-    let rdd = spark.sum_by_key(rdd, HashPartitioner::new(5));
+    // let rdd = spark.sum_by_key(rdd, HashPartitioner::new(5));
     let result = spark.collect(rdd).await;
     println!("client code received result = {:?}", result);
 }

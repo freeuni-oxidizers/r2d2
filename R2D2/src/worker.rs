@@ -1,14 +1,11 @@
 use crate::core::executor::Executor;
 use crate::core::graph::Graph;
-use crate::core::rdd::{RddId, RddPartitionId};
+use crate::core::rdd::RddPartitionId;
 use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
 use crate::r2d2::master_client::MasterClient;
 use crate::r2d2::{GetTaskRequest, TaskResultRequest};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream};
+use crate::worker::bucket_receiver::receiver_loop;
+use std::path::PathBuf;
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;
 use tonic::Request;
@@ -29,42 +26,145 @@ async fn get_master_client(
         }
     }
 }
-type Cache = Arc<Mutex<HashMap<RddPartitionId, Vec<u8>>>>;
 
-async fn handle_connection(mut socket: TcpStream, cache: Cache) {
-    tokio::spawn(async move {
-        let rdd_id = socket.read_u32().await.expect("") as usize;
-        let partition_id = socket.read_u32().await.expect("") as usize;
-        let rdd_pid = RddPartitionId {
-            rdd_id: RddId(rdd_id),
-            partition_id,
-        };
-        let data = { cache.lock().unwrap().remove(&rdd_pid).unwrap() };
-        // TODO: if fail sending return data to cache.
-        if socket.write_all(&data).await.is_err() {
-            cache.lock().unwrap().insert(rdd_pid, data);
-        }
-    });
-}
+pub(crate) mod bucket_receiver {
+    use core::fmt;
+    use std::path::{Path, PathBuf};
 
-pub async fn start(id: usize, port: usize, master_addr: String) {
-    let cache: Cache = Arc::new(Mutex::new(HashMap::new()));
-    let cachecp = cache.clone();
-    tokio::spawn(async move {
-        let addr = format!("0.0.0.0:{port}");
-        let listener = TcpListener::bind(addr).await.expect("Worker couldn't bind");
-        loop {
-            if let Ok((socket, _)) = listener.accept().await {
-                handle_connection(socket, cachecp.clone()).await;
+    use tokio::{
+        fs,
+        io::AsyncReadExt,
+        net::{TcpListener, TcpStream},
+    };
+    use tonic::{transport::Channel, Request};
+
+    use crate::{
+        core::{
+            rdd::{RddId, RddPartitionId},
+            task_scheduler::WorkerEvent,
+        },
+        r2d2::{master_client::MasterClient, TaskResultRequest},
+    };
+
+    #[derive(Debug)]
+    pub(crate) enum Error {
+        FsError,
+        NetworkError,
+        AlreadyExists,
+    }
+
+    impl std::error::Error for Error {}
+
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Error::FsError => write!(f, "FS error when creating bucket file"),
+                Error::NetworkError => write!(f, "Error when receiving bucket from socket"),
+                Error::AlreadyExists => write!(
+                    f,
+                    "Couldn't create new bucket file. Probably already exists"
+                ),
             }
         }
-    });
+    }
 
-    // master may not be running yet
-    println!("Worker #{id} starting");
+    /// Receive a bucket from socket
+    /// BSP(Bucket Send Protocol) format:
+    /// rdd_id: u32
+    /// partition_id: u32
+    /// data_len: u64
+    /// data: [u8; data_len]
+    /// EOF
+    async fn receive_bucket_from_socket(
+        worker_id: usize,
+        mut socket: TcpStream,
+        root_dir: &Path,
+    ) -> Result<RddPartitionId, Error> {
+        let rdd_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
+        let partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
+        let data_len = socket.read_u64().await.map_err(|_| Error::NetworkError)?;
+        let rdd_dir = root_dir.join(format!("worker_{worker_id}")).join(format!("rdd_{rdd_id}"));
+        fs::create_dir_all(&rdd_dir)
+            .await
+            .map_err(|_| Error::FsError)?;
+        let partition_path = rdd_dir.join(format!("partition_{partition_id}"));
+        if partition_path.exists() {
+            return Err(Error::AlreadyExists);
+        }
+        let mut file = fs::File::create(partition_path)
+            .await
+            .map_err(|_| Error::FsError)?;
+        let bytes_copied = tokio::io::copy(&mut socket, &mut file)
+            .await
+            .map_err(|_| Error::NetworkError)?;
+        if bytes_copied != data_len {
+            return Err(Error::NetworkError)?;
+        }
+        Ok(RddPartitionId {
+            rdd_id: RddId(rdd_id as usize),
+            partition_id: partition_id as usize,
+        })
+    }
+
+    pub(crate) async fn receiver_loop(
+        worker_id: usize,
+        port: usize,
+        fs_root: PathBuf,
+        master_client: MasterClient<Channel>,
+    ) -> Result<(), Error> {
+        let addr = format!("0.0.0.0:{port}");
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|_| Error::NetworkError)?;
+        loop {
+            if let Ok((socket, _)) = listener.accept().await {
+                let fs_root = fs_root.clone();
+                let mut master_client = master_client.clone();
+                tokio::spawn(async move {
+                    // TODO: ping master about received bucket
+                    match receive_bucket_from_socket(worker_id, socket, &fs_root).await {
+                        Ok(part_id) => {
+                            let worker_event = WorkerEvent::BucketReceived(worker_id, part_id);
+                            let result = TaskResultRequest {
+                                serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
+                            };
+                            master_client
+                                .post_task_result(Request::new(result))
+                                .await
+                                .unwrap();
+                        }
+                        Err(e) => {
+                            match e {
+                                Error::FsError => panic!("File system error occured when receiving bucket"),
+                                _ => {}
+                            }
+                        }
+                    };
+                });
+            }
+        }
+    }
+}
+
+pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf) {
+    // let cache: Cache = Arc::new(Mutex::new(HashMap::new()));
+    // let cachecp = cache.clone();
+
     let mut master_conn = get_master_client(format!("http://{}", master_addr))
         .await
         .expect("Worker couldn't connect to master");
+    {
+        let master_conn = master_conn.clone();
+
+        tokio::spawn(async move {
+            receiver_loop(id, port, fs_root, master_conn)
+                .await
+                .expect("Failed to start bucket receiver loop");
+        });
+    }
+
+    // master may not be running yet
+    println!("Worker #{id} starting");
     let mut graph: Graph = Graph::default();
     // Here response.action must be TaskAction::Work
     let mut executor = Executor::new();
@@ -114,10 +214,10 @@ pub async fn start(id: usize, port: usize, master_addr: String) {
             serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
         };
         println!("worker={} got result={:?}", id, result);
-        cache
-            .lock()
-            .unwrap()
-            .insert(rdd_pid, result.serialized_task_result.clone());
+        // cache
+        //     .lock()
+        //     .unwrap()
+        //     .insert(rdd_pid, result.serialized_task_result.clone());
         master_conn
             .post_task_result(Request::new(result))
             .await

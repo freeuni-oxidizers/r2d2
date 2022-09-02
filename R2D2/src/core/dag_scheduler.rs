@@ -91,6 +91,7 @@ impl DagScheduler {
                         }
                     }
                     WorkerEvent::Fail(_) => panic!("Task somehow failed?"),
+                    WorkerEvent::BucketReceived(_, _) => todo!(),
                 }
             }
         }

@@ -40,11 +40,10 @@ impl Executor {
                     self.resolve(
                         graph,
                         RddPartitionId {
-                            rdd_id: dbg!(dep),
-                            partition_id: dbg!(id.partition_id),
+                            rdd_id: dep,
+                            partition_id: id.partition_id,
                         },
                     );
-                    // print!("{}", id.partition_id)
                 }
                 RddType::Wide => {
                     // TODO: fetch result from received buckets
@@ -60,24 +59,18 @@ impl Executor {
                     }
                 }
             }
-            self.resolve(
-                graph,
-                RddPartitionId {
-                    rdd_id: dep,
-                    partition_id: id.partition_id,
-                },
-            );
         }
         match graph.get_rdd(id.rdd_id).unwrap().work_fns() {
             RddWorkFns::Narrow(narrow_work) => {
                 let res = narrow_work.work(&self.cache, id.partition_id);
                 self.cache.put(id, res);
             }
-            RddWorkFns::Wide(_) => todo!(),
+            RddWorkFns::Wide(_) => {
+                // wide_work.partition_data(input_partition)
+            }
         };
     }
 }
-
 
 // 1. at the end of task run first two steps of shuffle.
 //  * might need some changes to `Task` and `resolve`
@@ -96,15 +89,4 @@ impl Executor {
 
 // sc.cache(rdd);
 
-
 // 5. join
-
-
-
-
-
-
-
-
-
-

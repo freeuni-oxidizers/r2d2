@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 pub mod core;
@@ -26,6 +28,9 @@ pub struct Args {
 
     #[clap(long, takes_value = true)]
     pub id: usize,
+
+    #[clap(short, long, value_parser, value_name = "DIR")]
+    fs_root: PathBuf,
 
     #[clap(long, takes_value = true, default_value_t = 8888)]
     pub port: usize,
