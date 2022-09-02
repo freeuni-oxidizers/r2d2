@@ -45,7 +45,11 @@ impl ResultCache {
             .map(|b| b.as_ref())
     }
 
-    pub fn take_as_any(&self, rdd_id: RddId, partition_id: usize) -> Option<Box<dyn Any + Send>> {
+    pub fn take_as_any(
+        &mut self,
+        rdd_id: RddId,
+        partition_id: usize,
+    ) -> Option<Box<dyn Any + Send>> {
         self.data.remove(&RddPartitionId {
             rdd_id,
             partition_id,

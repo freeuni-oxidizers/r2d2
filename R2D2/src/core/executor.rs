@@ -69,6 +69,8 @@ impl Executor {
     fn resolve_task(&mut self, graph: &Graph, task: Task) -> Vec<Box<dyn Any + Send>> {
         assert!(graph.contains(task.final_rdd), "id not found in context");
         // TODO: check if buckets are already on the disk and return without futher computations
+
+        // if final task is not wide, it is ResultTask type, which is not handled here (not my fn's prob).
         if let Dependency::Wide(dep_id) = graph.get_rdd(task.final_rdd).unwrap().rdd_dependency() {
             self.resolve(
                 graph,
@@ -77,7 +79,6 @@ impl Executor {
                     partition_id: task.partition_id,
                 },
             );
-            // if final task is not wide, it is ResultTask type, which is not handled here.
             // perform bucketisation of final data
             if let RddWorkFns::Wide(work) = graph.get_rdd(task.final_rdd).unwrap().work_fns() {
                 let buckets =
@@ -91,7 +92,7 @@ impl Executor {
                 return aggred_buckets;
             }
         };
-        return;
+        unreachable!();
     }
 }
 
