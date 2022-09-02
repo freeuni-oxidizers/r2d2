@@ -1,6 +1,8 @@
-use crate::core::rdd::{shuffle_rdd::Aggregator, RddType, RddWorkFns};
+use std::any::Any;
 
-use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId};
+use crate::core::rdd::{shuffle_rdd::Aggregator, Dependency, RddWideWork, RddWorkFns};
+
+use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::Task};
 
 pub struct Executor {
     /// Cache which stores full partitions ready for next rdd
@@ -35,9 +37,9 @@ impl Executor {
             return;
         }
 
-        let rdd_type = graph.get_rdd(id.rdd_id).unwrap().rdd_type();
+        let rdd_type = graph.get_rdd(id.rdd_id).unwrap().rdd_dependency();
         match rdd_type {
-            RddType::Narrow(dep_rdd) => self.resolve(
+            Dependency::Narrow(dep_rdd) => self.resolve(
                 graph,
                 RddPartitionId {
                     rdd_id: dep_rdd,
@@ -62,6 +64,34 @@ impl Executor {
                 self.cache.put(id, wides_result);
             }
         };
+    }
+
+    fn resolve_task(&mut self, graph: &Graph, task: Task) -> Vec<Box<dyn Any + Send>> {
+        assert!(graph.contains(task.final_rdd), "id not found in context");
+        // TODO: check if buckets are already on the disk and return without futher computations
+        if let Dependency::Wide(dep_id) = graph.get_rdd(task.final_rdd).unwrap().rdd_dependency() {
+            self.resolve(
+                graph,
+                RddPartitionId {
+                    rdd_id: dep_id,
+                    partition_id: task.partition_id,
+                },
+            );
+            // if final task is not wide, it is ResultTask type, which is not handled here.
+            // perform bucketisation of final data
+            if let RddWorkFns::Wide(work) = graph.get_rdd(task.final_rdd).unwrap().work_fns() {
+                let buckets =
+                    work.partition_data(self.cache.take_as_any(dep_id, task.partition_id).unwrap());
+
+                let aggred_buckets: Vec<_> = buckets
+                    .into_iter()
+                    .map(|bucket| work.aggregate_inside_bucket(bucket))
+                    .collect();
+
+                return aggred_buckets;
+            }
+        };
+        return;
     }
 }
 
