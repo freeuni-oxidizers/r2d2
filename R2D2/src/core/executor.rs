@@ -58,15 +58,22 @@ impl Executor {
             RddWorkFns::Wide(aggr_fns) => {
                 // TODO: error handling - if bucket is missing (is None)
                 let rdd = graph.get_rdd(id.rdd_id).unwrap();
-                let buckets = self
-                    .received_buckets
-                    .remove(&id)
-                    .unwrap()
-                    .into_iter()
-                    .map(|x| rdd.deserialize_raw_data(x))
-                    .collect();
-                let wides_result = aggr_fns.aggregate_buckets(buckets);
-                self.cache.put(id, wides_result);
+
+                if let Dependency::Wide(depp) = graph.get_rdd(id.rdd_id).unwrap().rdd_dependency() {
+                    let narrow_partition_nums = graph.get_rdd(depp).unwrap().partitions_num();
+                    let buckets: Vec<_> = (0..narrow_partition_nums)
+                        .map(|narrow_partition_id| {
+                            rdd.deserialize_raw_data(
+                                self.received_buckets
+                                    .remove(&(id, narrow_partition_id))
+                                    .unwrap(),
+                            )
+                        })
+                        .collect();
+
+                    let wides_result = aggr_fns.aggregate_buckets(buckets);
+                    self.cache.put(id, wides_result);
+                };
             }
         };
     }
