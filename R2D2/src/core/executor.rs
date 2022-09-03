@@ -6,6 +6,8 @@ use crate::core::rdd::{Dependency, RddWorkFns};
 
 use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::WideTask};
 
+/// Cloning this should still refer to same cache
+#[derive(Clone, Debug)]
 pub struct Executor {
     /// Cache which stores full partitions ready for next rdd
     // this field is basically storing Vec<T>s where T can be different for each id we are not

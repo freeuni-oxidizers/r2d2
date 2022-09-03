@@ -36,7 +36,7 @@ pub struct Args {
     pub port: usize,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     worker_addrs: Vec<String>,
     master_addr: String,
