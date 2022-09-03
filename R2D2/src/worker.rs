@@ -46,7 +46,7 @@ pub(crate) mod bucket_receiver {
     use crate::{
         core::{
             rdd::{RddId, RddPartitionId},
-            task_scheduler::WorkerEvent,
+            task_scheduler::{BucketReceivedEvent, WorkerEvent},
         },
         r2d2::{master_client::MasterClient, TaskResultRequest},
     };
@@ -134,15 +134,19 @@ pub(crate) mod bucket_receiver {
                 tokio::spawn(async move {
                     // TODO: ping master about received bucket
                     match receive_bucket_from_socket(worker_id, socket, &fs_root).await {
-                        Ok(part_id) => {
-                            let worker_event = WorkerEvent::BucketReceived(worker_id, part_id);
-                            let result = TaskResultRequest {
-                                serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
-                            };
-                            master_client
-                                .post_task_result(Request::new(result))
-                                .await
-                                .unwrap();
+                        Ok(_) => {
+                            // let worker_event = WorkerEvent::BucketReceived(BucketReceivedEvent {
+                            //     worker_id,
+                            //     rdd_id,
+                            //     bucket_id,
+                            // });
+                            // let result = TaskResultRequest {
+                            //     serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
+                            // };
+                            // master_client
+                            //     .post_task_result(Request::new(result))
+                            //     .await
+                            //     .unwrap();
                         }
                         Err(e) => match e {
                             Error::FsError => {
