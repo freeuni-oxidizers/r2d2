@@ -43,15 +43,15 @@ mod dsu {
     pub struct GroupId(usize);
 
     pub fn find_groups(graph: &Graph, target_rdd: RddId) -> HashMap<RddPartitionId, GroupId> {
-        let dsu = PartitionDsu {
+        let mut dsu = PartitionDsu {
             parent: HashMap::default(),
             visited: Default::default(),
         };
         dsu.run(graph, target_rdd);
-        let cur_id = 0;
-        let ids: HashMap<_, _> = HashMap::default();
-        let res: HashMap<_, _> = HashMap::default();
-        for (rpid, _) in dsu.parent.into_iter() {
+        let mut cur_id = 0;
+        let mut ids: HashMap<_, _> = HashMap::default();
+        let mut res: HashMap<_, _> = HashMap::default();
+        for (rpid, _) in dsu.parent.clone().into_iter() {
             let p = dsu.par(rpid);
             let id = match ids.get(&p) {
                 Some(id) => *id,
@@ -227,7 +227,7 @@ impl DagScheduler {
 
     fn get_assigned_worker(&mut self, group: GroupId) -> usize {
         *self.worker_assignment.entry(group).or_insert_with(|| {
-            let rng = rand::thread_rng();
+            let mut rng = rand::thread_rng();
             rng.gen()
         })
     }
@@ -302,7 +302,7 @@ impl DagScheduler {
             Dependency::Narrow(dep_rdd_id) => self.create_stage_tasks(graph, dep_rdd_id),
             Dependency::Wide(dep_rdd_id) => {
                 self.create_stage_tasks(graph, rdd_id);
-                let stage_tasks = Vec::new();
+                let mut stage_tasks = Vec::new();
                 let prev_rdd = graph.get_rdd(dep_rdd_id).unwrap();
                 for narrow_partition_id in 0..prev_rdd.partitions_num() {
                     let task_id = self.new_task_id();

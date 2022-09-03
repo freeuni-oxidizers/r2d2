@@ -1,7 +1,7 @@
 use crate::core::executor::Executor;
 use crate::core::graph::Graph;
 use crate::core::rdd::RddPartitionId;
-use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
+use crate::core::task_scheduler::{TaskKind, WorkerEvent, WorkerMessage};
 use crate::r2d2::master_client::MasterClient;
 use crate::r2d2::{GetTaskRequest, TaskResultRequest};
 use crate::worker::bucket_receiver::receiver_loop;
@@ -202,54 +202,54 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 continue;
             }
             WorkerMessage::RunTask(task) => {
-                let rdd_pid = RddPartitionId {
-                    rdd_id: task.wide_rdd_id,
-                    partition_id: task.narrow_partition_id,
-                };
-                // TODO: run this in new os thread
-                let serialized_buckets = executor.resolve_task(&graph, &task);
+                match task.kind {
+                    TaskKind::ResultTask(_) => todo!(),
+                    TaskKind::WideTask(wide_task) => {
+                        let rdd_pid = RddPartitionId {
+                            rdd_id: wide_task.wide_rdd_id,
+                            partition_id: wide_task.narrow_partition_id,
+                        };
+                        // TODO: run this in new os thread
+                        let serialized_buckets = executor.resolve_task(&graph, &wide_task);
 
-                let target_addrs: Vec<_> = task
-                    .target_workers
-                    .into_iter()
-                    .map(|worker_id| (worker_id, config.worker_addrs[worker_id].clone()))
-                    .collect();
+                        let target_addrs: Vec<_> = wide_task
+                            .target_workers
+                            .into_iter()
+                            .map(|worker_id| (worker_id, config.worker_addrs[worker_id].clone()))
+                            .collect();
 
-                let bucket_worker_pair =
-                    target_addrs.into_iter().zip(serialized_buckets.into_iter());
+                        let bucket_worker_pair =
+                            target_addrs.into_iter().zip(serialized_buckets.into_iter());
 
-                bucket_worker_pair.enumerate().for_each(
-                    |(wide_partition_id, ((worker_id, worker_addr), bucket))| {
-                        if id == worker_id {
-                            executor.received_buckets.insert(
-                                (
-                                    RddPartitionId {
-                                        rdd_id: task.wide_rdd_id,
-                                        partition_id: wide_partition_id,
-                                    },
-                                    task.narrow_partition_id,
-                                ),
-                                bucket,
-                            );
-                        } else {
-                            tokio::spawn(async move {
-                                send_buckets(
-                                    bucket,
-                                    worker_addr,
-                                    task.wide_rdd_id.0,
-                                    wide_partition_id,
-                                    task.narrow_partition_id,
-                                )
-                                .await;
-                            });
-                        }
-                    },
-                );
-
-                // tokio::spawn(async move {
-                //     // config.worker_addrs[]
-                //     send_buckets(serialized_buckets, String::from_str("tamta")).await;
-                // });
+                        bucket_worker_pair.enumerate().for_each(
+                            |(wide_partition_id, ((worker_id, worker_addr), bucket))| {
+                                if id == worker_id {
+                                    executor.received_buckets.insert(
+                                        (
+                                            RddPartitionId {
+                                                rdd_id: wide_task.wide_rdd_id,
+                                                partition_id: wide_partition_id,
+                                            },
+                                            wide_task.narrow_partition_id,
+                                        ),
+                                        bucket,
+                                    );
+                                } else {
+                                    tokio::spawn(async move {
+                                        send_buckets(
+                                            bucket,
+                                            worker_addr,
+                                            wide_task.wide_rdd_id.0,
+                                            wide_partition_id,
+                                            wide_task.narrow_partition_id,
+                                        )
+                                        .await;
+                                    });
+                                }
+                            },
+                        );
+                    }
+                }
             }
             WorkerMessage::Wait => {
                 tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;

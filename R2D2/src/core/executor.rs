@@ -2,7 +2,7 @@ use std::{any::Any, collections::HashMap};
 
 use crate::core::rdd::{shuffle_rdd::Aggregator, Dependency, RddWideWork, RddWorkFns};
 
-use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::Task};
+use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::{Task, WideTask}};
 
 pub struct Executor {
     /// Cache which stores full partitions ready for next rdd
@@ -78,7 +78,7 @@ impl Executor {
         };
     }
 
-    pub fn resolve_task(&mut self, graph: &Graph, task: &Task) -> Vec<Vec<u8>> {
+    pub fn resolve_task(&mut self, graph: &Graph, task: &WideTask) -> Vec<Vec<u8>> {
         assert!(graph.contains(task.wide_rdd_id), "id not found in context");
         // TODO: check if buckets are already on the disk and return without futher computations
 
