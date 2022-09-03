@@ -6,6 +6,8 @@ use crate::core::rdd::{Dependency, RddWorkFns};
 
 use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::WideTask};
 
+/// Cloning this should still refer to same cache
+#[derive(Clone, Debug)]
 pub struct Executor {
     /// Cache which stores full partitions ready for next rdd
     // this field is basically storing Vec<T>s where T can be different for each id we are not
@@ -50,7 +52,16 @@ impl Executor {
 
         match graph.get_rdd(id.rdd_id).unwrap().work_fns() {
             RddWorkFns::Narrow(narrow_work) => {
-                let res = narrow_work.work(&self.cache, id.partition_id);
+                let rdd = graph.get_rdd(id.rdd_id).unwrap();
+                let res = match rdd.rdd_dependency() {
+                    Dependency::Narrow(prev_rdd) => {
+                        narrow_work.work(self.cache.take_as_any(prev_rdd, id.partition_id), id.partition_id)
+                    },
+                    Dependency::No => {
+                        narrow_work.work(None, id.partition_id)
+                    },
+                    Dependency::Wide(_) => unreachable!(),
+                };
                 self.cache.put(id, res);
             }
             RddWorkFns::Wide(aggr_fns) => {

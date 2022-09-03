@@ -8,8 +8,10 @@ use crate::worker::bucket_receiver::receiver_loop;
 use crate::Config;
 use std::error::Error;
 use std::path::PathBuf;
+use std::thread;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;
 use tonic::Request;
@@ -172,7 +174,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
         .await
         .expect("Worker couldn't connect to master");
 
-    let mut executor = Executor::new();
+    let executor = Executor::new();
 
     {
         let cache = executor.received_buckets.clone();
@@ -215,76 +217,112 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 match task.kind {
                     TaskKind::ResultTask(ref result_task) => {
                         let rdd_pid = result_task.rdd_partition_id;
-                        executor.resolve(&graph, rdd_pid);
+                        let (materialized_tx, materialized_rx) = oneshot::channel::<Vec<u8>>();
+                        {
+                            let graph = graph.clone();
+                            let result_task = result_task.clone();
+                            let mut executor = executor.clone();
+                            thread::spawn(move || {
+                                executor.resolve(&graph, rdd_pid);
 
-                        let materialized_rdd_result = graph
-                            .get_rdd(result_task.rdd_partition_id.rdd_id)
-                            .unwrap()
-                            .serialize_raw_data(
-                                executor
-                                    .cache
-                                    .take_as_any(rdd_pid.rdd_id, rdd_pid.partition_id)
-                                    .unwrap(),
-                            );
-
-                        let worker_event =
-                            WorkerEvent::Success(task.clone(), materialized_rdd_result);
-                        send_worker_event(&mut master_conn, worker_event).await;
+                                let materialized_rdd_result = graph
+                                    .get_rdd(result_task.rdd_partition_id.rdd_id)
+                                    .unwrap()
+                                    .serialize_raw_data(
+                                        executor
+                                            .cache
+                                            .take_as_any(rdd_pid.rdd_id, rdd_pid.partition_id)
+                                            .unwrap(),
+                                    );
+                                materialized_tx.send(materialized_rdd_result).unwrap()
+                            });
+                        }
+                        {
+                            // this moves inside thread below
+                            let mut master_conn = master_conn.clone();
+                            tokio::spawn(async move {
+                                let materialized_rdd_result = materialized_rx.await.unwrap();
+                                let worker_event =
+                                    WorkerEvent::Success(task.clone(), materialized_rdd_result);
+                                send_worker_event(&mut master_conn, worker_event).await;
+                            });
+                        }
                     }
                     TaskKind::WideTask(wide_task) => {
-                        // TODO: run this in new os thread
-                        let serialized_buckets = executor.resolve_task(&graph, &wide_task);
+                        let (buckets_tx, buckets_rx) = oneshot::channel::<Vec<Vec<u8>>>();
+                        {
+                            let graph = graph.clone();
+                            let wide_task = wide_task.clone();
+                            let mut executor = executor.clone();
+                            thread::spawn(move || {
+                                let serialized_buckets = executor.resolve_task(&graph, &wide_task);
+                                buckets_tx.send(serialized_buckets).unwrap()
+                            });
+                        }
+                        {
+                            let executor = executor.clone();
+                            let config = config.clone();
+                            let master_conn = master_conn.clone();
+                            tokio::spawn(async move {
+                                let serialized_buckets = buckets_rx.await.unwrap();
+                                let target_addrs: Vec<_> = wide_task
+                                    .target_workers
+                                    .into_iter()
+                                    .map(|worker_id| {
+                                        (worker_id, config.worker_addrs[worker_id].clone())
+                                    })
+                                    .collect();
 
-                        let target_addrs: Vec<_> = wide_task
-                            .target_workers
-                            .into_iter()
-                            .map(|worker_id| (worker_id, config.worker_addrs[worker_id].clone()))
-                            .collect();
+                                let bucket_worker_pair =
+                                    target_addrs.into_iter().zip(serialized_buckets.into_iter());
 
-                        let bucket_worker_pair =
-                            target_addrs.into_iter().zip(serialized_buckets.into_iter());
+                                // error: locking to loong `for_each`
+                                bucket_worker_pair.enumerate().for_each(
+                                    |(wide_partition_id, ((worker_id, worker_addr), bucket))| {
+                                        if id == worker_id {
+                                            let mut received_buckets =
+                                                { executor.received_buckets.lock().unwrap() };
+                                            let rpid = RddPartitionId {
+                                                rdd_id: wide_task.wide_rdd_id,
+                                                partition_id: wide_partition_id,
+                                            };
 
-                        // error: locking to loong `for_each`
-                        bucket_worker_pair.enumerate().for_each(
-                            |(wide_partition_id, ((worker_id, worker_addr), bucket))| {
-                                if id == worker_id {
-                                    let mut received_buckets =
-                                        { executor.received_buckets.lock().unwrap() };
-                                    let rpid = RddPartitionId {
-                                        rdd_id: wide_task.wide_rdd_id,
-                                        partition_id: wide_partition_id,
-                                    };
+                                            received_buckets.insert(
+                                                (rpid, wide_task.narrow_partition_id),
+                                                bucket,
+                                            );
 
-                                    received_buckets
-                                        .insert((rpid, wide_task.narrow_partition_id), bucket);
+                                            let worker_event =
+                                                WorkerEvent::BucketReceived(BucketReceivedEvent {
+                                                    worker_id,
+                                                    wide_partition: rpid,
+                                                    narrow_partition_id: wide_task
+                                                        .narrow_partition_id,
+                                                });
 
-                                    let worker_event =
-                                        WorkerEvent::BucketReceived(BucketReceivedEvent {
-                                            worker_id,
-                                            wide_partition: rpid,
-                                            narrow_partition_id: wide_task.narrow_partition_id,
-                                        });
-
-                                    let mut master_conn = master_conn.clone();
-                                    // ping master about received bucket
-                                    tokio::spawn(async move {
-                                        send_worker_event(&mut master_conn, worker_event).await
-                                    });
-                                } else {
-                                    tokio::spawn(async move {
-                                        send_buckets(
-                                            bucket,
-                                            worker_addr,
-                                            wide_task.wide_rdd_id.0,
-                                            wide_partition_id,
-                                            wide_task.narrow_partition_id,
-                                        )
-                                        .await
-                                        .expect("Couldn't send bucket");
-                                    });
-                                }
-                            },
-                        );
+                                            let mut master_conn = master_conn.clone();
+                                            // ping master about received bucket
+                                            tokio::spawn(async move {
+                                                send_worker_event(&mut master_conn, worker_event)
+                                                    .await
+                                            });
+                                        } else {
+                                            tokio::spawn(async move {
+                                                send_buckets(
+                                                    bucket,
+                                                    worker_addr,
+                                                    wide_task.wide_rdd_id.0,
+                                                    wide_partition_id,
+                                                    wide_task.narrow_partition_id,
+                                                )
+                                                .await
+                                                .expect("Couldn't send bucket");
+                                            });
+                                        }
+                                    },
+                                );
+                            });
+                        }
                     }
                 }
             }
