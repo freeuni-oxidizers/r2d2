@@ -13,7 +13,7 @@ pub struct Executor {
     /// Cache which is used to store partial results of shuffle operations
     // TODO: buckets
     pub takeout: ResultCache,
-    pub received_buckets: HashMap<RddPartitionId, Vec<Vec<u8>>>,
+    pub received_buckets: HashMap<(RddPartitionId, usize), Vec<u8>>,
 }
 
 impl Default for Executor {
