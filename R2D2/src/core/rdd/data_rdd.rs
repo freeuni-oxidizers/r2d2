@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::core::cache::ResultCache;
-
 use super::{Data, Dependency, RddBase, RddId, RddIndex, RddWorkFns, TypedNarrowRddWork, TypedRdd};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -22,9 +20,14 @@ impl<T> TypedNarrowRddWork for DataRdd<T>
 where
     T: Data,
 {
-    type Item = T;
+    type InputItem = T;
+    type OutputItem = T;
 
-    fn work(&self, _cache: &ResultCache, partition_id: usize) -> Vec<Self::Item> {
+    fn work(
+        &self,
+        _input_partition: Option<Vec<Self::InputItem>>,
+        partition_id: usize,
+    ) -> Vec<Self::OutputItem> {
         self.data[partition_id].clone()
     }
 }

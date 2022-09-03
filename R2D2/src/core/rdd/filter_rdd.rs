@@ -43,17 +43,17 @@ where
     T: Data,
     F: Filterer<Item = T>,
 {
-    type Item = T;
+    type InputItem = T;
+    type OutputItem = T;
 
     fn work(
         &self,
-        cache: &crate::core::cache::ResultCache,
+        input_partition: Option<Vec<Self::InputItem>>,
         partition_id: usize,
-    ) -> Vec<Self::Item> {
-        let v = cache.get_as(self.prev, partition_id).unwrap();
-        let g: Vec<T> = v
+    ) -> Vec<Self::OutputItem> {
+        let g: Vec<T> = input_partition
+            .unwrap()
             .into_iter()
-            .cloned()
             .filter(|v| self.filterer.predicate(v))
             .collect();
         g
