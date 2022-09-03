@@ -1,8 +1,8 @@
-use std::{any::Any, collections::HashMap};
+use std::collections::HashMap;
 
-use crate::core::rdd::{shuffle_rdd::Aggregator, Dependency, RddWideWork, RddWorkFns};
+use crate::core::rdd::{Dependency, RddWorkFns};
 
-use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::{Task, WideTask}};
+use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::WideTask};
 
 pub struct Executor {
     /// Cache which stores full partitions ready for next rdd

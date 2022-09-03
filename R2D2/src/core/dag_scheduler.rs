@@ -3,6 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+use async_recursion::async_recursion;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
@@ -18,7 +19,7 @@ use super::{
     task_scheduler::{BucketReceivedEvent, DagMessage, TaskKind, WideTask, WorkerEvent},
 };
 
-// collect
+// e.g. collect
 pub struct Job {
     pub graph: Graph,
     pub target_rdd_id: RddId,
@@ -221,14 +222,14 @@ impl DagScheduler {
             .collect()
     }
 
-    fn is_all_deps_cached(&self, rpid: &TaskId) -> bool {
+    fn _is_all_deps_cached(&self, rpid: &TaskId) -> bool {
         !self.get_missing_deps(rpid).is_empty()
     }
 
     fn get_assigned_worker(&mut self, group: GroupId) -> usize {
         *self.worker_assignment.entry(group).or_insert_with(|| {
             let mut rng = rand::thread_rng();
-            rng.gen()
+            (rng.gen::<usize>())%self.n_workers
         })
     }
 
@@ -261,6 +262,7 @@ impl DagScheduler {
         };
     }
 
+    #[async_recursion]
     async fn try_submit_task(&mut self, task_id: TaskId) {
         let already_submitted =
             self.waiting_tasks.contains(&task_id) || self.running_tasks.contains(&task_id);
@@ -271,13 +273,13 @@ impl DagScheduler {
                 let mut task = self.tasks.get(&task_id).unwrap().clone();
                 self.fill_worker_information(&mut task);
                 self.running_tasks.insert(task.id);
-                self.task_sender.send(DagMessage::SubmitTask(task));
+                self.task_sender.send(DagMessage::SubmitTask(task)).await.expect("task scheduler ded");
             } else {
                 // Try to run dependecies, put task on waiting queue
                 self.waiting_tasks.insert(task_id);
                 for dep_rpid in todo_deps {
                     for task_id in self.stage_tasks.get(&dep_rpid.rdd_id).unwrap().clone() {
-                        self.try_submit_task(task_id);
+                        self.try_submit_task(task_id).await;
                     }
                 }
             }
@@ -357,7 +359,7 @@ impl DagScheduler {
                     partition_id: node.partition_id,
                 },
             ),
-            Dependency::Wide(dep_rdd_id) => {
+            Dependency::Wide(_) => {
                 vec![node]
             }
             Dependency::No => Vec::new(),
@@ -416,6 +418,7 @@ impl DagScheduler {
                 self.store_task(task_id, task, deps);
                 result_stage_tasks.push(task_id);
             }
+            self.stage_tasks.insert(job.target_rdd_id, result_stage_tasks);
 
             {
                 // send over graph to task scheduler
@@ -428,7 +431,7 @@ impl DagScheduler {
 
             // mby avoid clone
             for task_id in self.stage_tasks.get(&job.target_rdd_id).unwrap().clone() {
-                self.try_submit_task(task_id);
+                self.try_submit_task(task_id).await;
             }
 
             let mut result_v: Vec<Option<Box<dyn Any + Send>>> = Vec::new();

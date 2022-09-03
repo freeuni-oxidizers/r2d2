@@ -203,7 +203,30 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
             }
             WorkerMessage::RunTask(task) => {
                 match task.kind {
-                    TaskKind::ResultTask(_) => todo!(),
+                    TaskKind::ResultTask(ref result_task) => {
+                        let rdd_pid = result_task.rdd_partition_id;
+                        executor.resolve(&graph, rdd_pid);
+
+                        let materialized_rdd_result = graph
+                            .get_rdd(result_task.rdd_partition_id.rdd_id)
+                            .unwrap()
+                            .serialize_raw_data(
+                                executor
+                                    .cache
+                                    .get_as_any(rdd_pid.rdd_id, rdd_pid.partition_id)
+                                    .unwrap(),
+                            );
+
+                        let worker_event = WorkerEvent::Success(task.clone(), materialized_rdd_result);
+                        let result = TaskResultRequest {
+                            serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
+                        };
+                        println!("worker={} got result={:?}", id, result);
+                        master_conn
+                            .post_task_result(Request::new(result))
+                            .await
+                            .unwrap();
+                    }
                     TaskKind::WideTask(wide_task) => {
                         let rdd_pid = RddPartitionId {
                             rdd_id: wide_task.wide_rdd_id,
@@ -260,27 +283,6 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 break;
             }
         };
-
-        // let materialized_rdd_result = graph.get_rdd(task.final_rdd).unwrap().serialize_raw_data(
-        //     executor
-        //         .cache
-        //         .get_as_any(task.final_rdd, task.partition_id)
-        //         .unwrap(),
-        // );
-
-        // let worker_event = WorkerEvent::Success(task, materialized_rdd_result);
-        // let result = TaskResultRequest {
-        //     serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
-        // };
-        // println!("worker={} got result={:?}", id, result);
-        // // cache
-        // //     .lock()
-        // //     .unwrap()
-        // //     .insert(rdd_pid, result.serialized_task_result.clone());
-        // master_conn
-        //     .post_task_result(Request::new(result))
-        //     .await
-        //     .unwrap();
     }
     println!("\n\nWoker #{id} shutting down\n\n");
     std::process::exit(0);
