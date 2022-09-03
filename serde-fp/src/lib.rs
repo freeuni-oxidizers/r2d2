@@ -24,6 +24,7 @@ pub trait FunctionPointer: Copy + Send + Sync {
 macro_rules! fnptr_impls_safety_abi {
     ($FnTy: ty, $($Arg: ident),*) => {
 
+        #[allow(coherence_leak_check)]
         impl<Ret, $($Arg),*> FunctionPointer for $FnTy {
             #[inline]
             fn as_usize(self) -> usize {
@@ -70,7 +71,7 @@ fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J }
 fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J, K }
 fnptr_impls_args! { A, B, C, D, E, F, G, H, I, J, K, L }
 
-
+#[allow(coherence_leak_check)]
 impl<T, Ret> FunctionPointer for fn(&T) -> Ret {
     #[inline]
     fn as_usize(self) -> usize {

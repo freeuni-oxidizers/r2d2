@@ -1,7 +1,7 @@
 use crate::core::executor::Executor;
 use crate::core::graph::Graph;
 use crate::core::rdd::RddPartitionId;
-use crate::core::task_scheduler::{TaskKind, WorkerEvent, WorkerMessage};
+use crate::core::task_scheduler::{BucketReceivedEvent, TaskKind, WorkerEvent, WorkerMessage};
 use crate::r2d2::master_client::MasterClient;
 use crate::r2d2::{GetTaskRequest, TaskResultRequest};
 use crate::worker::bucket_receiver::receiver_loop;
@@ -31,6 +31,19 @@ async fn get_master_client(
     }
 }
 
+pub async fn send_worker_event(
+    master_client: &mut MasterClient<Channel>,
+    worker_event: WorkerEvent,
+) {
+    let result = TaskResultRequest {
+        serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
+    };
+    master_client
+        .post_task_result(Request::new(result))
+        .await
+        .unwrap();
+}
+
 pub(crate) mod bucket_receiver {
     use core::fmt;
     use std::{
@@ -43,15 +56,17 @@ pub(crate) mod bucket_receiver {
         io::AsyncReadExt,
         net::{TcpListener, TcpStream},
     };
-    use tonic::{transport::Channel, Request};
+    use tonic::transport::Channel;
 
     use crate::{
         core::{
             rdd::{RddId, RddPartitionId},
             task_scheduler::{BucketReceivedEvent, WorkerEvent},
         },
-        r2d2::{master_client::MasterClient, TaskResultRequest},
+        r2d2::master_client::MasterClient,
     };
+
+    use super::send_worker_event;
 
     #[derive(Debug)]
     #[allow(dead_code)]
@@ -134,13 +149,7 @@ pub(crate) mod bucket_receiver {
                                 wide_partition: rpid,
                                 narrow_partition_id,
                             });
-                            let result = TaskResultRequest {
-                                serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
-                            };
-                            master_client
-                                .post_task_result(Request::new(result))
-                                .await
-                                .unwrap();
+                            send_worker_event(&mut master_client, worker_event).await;
                         }
                         Err(e) => match e {
                             Error::FsError => {
@@ -198,6 +207,8 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
         match worker_message {
             WorkerMessage::NewGraph(g) => {
                 graph = g;
+                // ping graph receive event
+                send_worker_event(&mut master_conn, WorkerEvent::GraphReceived(id)).await;
                 continue;
             }
             WorkerMessage::RunTask(task) => {
@@ -212,20 +223,13 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                             .serialize_raw_data(
                                 executor
                                     .cache
-                                    .get_as_any(rdd_pid.rdd_id, rdd_pid.partition_id)
+                                    .take_as_any(rdd_pid.rdd_id, rdd_pid.partition_id)
                                     .unwrap(),
                             );
 
                         let worker_event =
                             WorkerEvent::Success(task.clone(), materialized_rdd_result);
-                        let result = TaskResultRequest {
-                            serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
-                        };
-                        println!("worker={} got result={:?}", id, result);
-                        master_conn
-                            .post_task_result(Request::new(result))
-                            .await
-                            .unwrap();
+                        send_worker_event(&mut master_conn, worker_event).await;
                     }
                     TaskKind::WideTask(wide_task) => {
                         // TODO: run this in new os thread
@@ -246,16 +250,26 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                                 if id == worker_id {
                                     let mut received_buckets =
                                         { executor.received_buckets.lock().unwrap() };
-                                    received_buckets.insert(
-                                        (
-                                            RddPartitionId {
-                                                rdd_id: wide_task.wide_rdd_id,
-                                                partition_id: wide_partition_id,
-                                            },
-                                            wide_task.narrow_partition_id,
-                                        ),
-                                        bucket,
-                                    );
+                                    let rpid = RddPartitionId {
+                                        rdd_id: wide_task.wide_rdd_id,
+                                        partition_id: wide_partition_id,
+                                    };
+
+                                    received_buckets
+                                        .insert((rpid, wide_task.narrow_partition_id), bucket);
+
+                                    let worker_event =
+                                        WorkerEvent::BucketReceived(BucketReceivedEvent {
+                                            worker_id,
+                                            wide_partition: rpid,
+                                            narrow_partition_id: wide_task.narrow_partition_id,
+                                        });
+
+                                    let mut master_conn = master_conn.clone();
+                                    // ping master about received bucket
+                                    tokio::spawn(async move {
+                                        send_worker_event(&mut master_conn, worker_event).await
+                                    });
                                 } else {
                                     tokio::spawn(async move {
                                         send_buckets(
@@ -275,7 +289,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 }
             }
             WorkerMessage::Wait => {
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 continue;
             }
             // this is a lie

@@ -67,7 +67,7 @@ pub enum Dependency {
 
 pub trait RddSerde {
     /// serialize data returned by this rdd in a form which can be sent over the network
-    fn serialize_raw_data(&self, raw_data: &(dyn Any + Send)) -> Vec<u8>;
+    fn serialize_raw_data(&self, raw_data: Box<dyn Any + Send>) -> Vec<u8>;
     /// deserialize data in a way which can be ingested into following rdds
     fn deserialize_raw_data(&self, serialized_data: Vec<u8>) -> Box<dyn Any + Send>;
 }
@@ -81,7 +81,7 @@ pub trait NarrowRddWork {
     fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any + Send>;
 }
 
-trait TypedRddWideWork {
+trait TypedRddWideWork: TypedRdd<Item = (Self::K, Self::C)> {
     type K: Data;
     type V: Data;
     type C: Data;
@@ -139,6 +139,7 @@ where
             self,
             *bucket_data.downcast().unwrap(),
         ))
+        // dbg!(type_name::<&Vec<(T::K, T::C)>>());
     }
     fn aggregate_buckets(
         &self,
@@ -215,9 +216,10 @@ impl<T> RddSerde for T
 where
     T: TypedRdd,
 {
-    fn serialize_raw_data(&self, raw_data: &(dyn Any + Send)) -> Vec<u8> {
-        let data: &Vec<T::Item> = raw_data.downcast_ref().unwrap();
-        serde_json::to_vec(data).unwrap()
+    // TODO: We don't need ownership.
+    fn serialize_raw_data(&self, raw_data: Box<dyn Any + Send>) -> Vec<u8> {
+        let data: Vec<T::Item> = *raw_data.downcast().unwrap();
+        serde_json::to_vec(&data).unwrap()
     }
 
     fn deserialize_raw_data(&self, serialized_data: Vec<u8>) -> Box<dyn Any + Send> {

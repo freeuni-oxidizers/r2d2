@@ -24,8 +24,9 @@ pub struct BucketReceivedEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkerEvent {
     Success(Task, Vec<u8>),
-    // worker_id, RddId, bucket_id
     BucketReceived(BucketReceivedEvent),
+    // (worker_id)
+    GraphReceived(usize),
     Fail(FailReason),
 }
 

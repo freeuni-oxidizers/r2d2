@@ -96,6 +96,8 @@ mod dsu {
             if self.visited.contains(&rpid) {
                 return;
             }
+            // hacky: this makes sure that node is recorded
+            self.par(rpid);
             self.visited.insert(rpid);
             let rdd = graph.get_rdd(rpid.rdd_id).unwrap();
             match rdd.rdd_dependency() {
@@ -217,7 +219,7 @@ impl DagScheduler {
             .get(rpid)
             .unwrap()
             .iter()
-            .filter(|dep_rpid| *self.cached.get(dep_rpid).unwrap_or(&false))
+            .filter(|dep_rpid| !*self.cached.get(dep_rpid).unwrap_or(&false))
             .cloned()
             .collect()
     }
@@ -229,7 +231,7 @@ impl DagScheduler {
     fn get_assigned_worker(&mut self, group: GroupId) -> usize {
         *self.worker_assignment.entry(group).or_insert_with(|| {
             let mut rng = rand::thread_rng();
-            (rng.gen::<usize>())%self.n_workers
+            (rng.gen::<usize>()) % self.n_workers
         })
     }
 
@@ -264,16 +266,22 @@ impl DagScheduler {
 
     #[async_recursion]
     async fn try_submit_task(&mut self, task_id: TaskId) {
+        println!("try submit: {task_id:?}");
         let already_submitted =
             self.waiting_tasks.contains(&task_id) || self.running_tasks.contains(&task_id);
         if !already_submitted {
             let todo_deps = self.get_missing_deps(&task_id);
+            dbg!(&todo_deps);
             if todo_deps.is_empty() {
                 // All dependecies are ready, commence task execution!
                 let mut task = self.tasks.get(&task_id).unwrap().clone();
                 self.fill_worker_information(&mut task);
                 self.running_tasks.insert(task.id);
-                self.task_sender.send(DagMessage::SubmitTask(task)).await.expect("task scheduler ded");
+                println!("[!] submitting task: {task:?}");
+                self.task_sender
+                    .send(DagMessage::SubmitTask(task))
+                    .await
+                    .expect("task scheduler ded");
             } else {
                 // Try to run dependecies, put task on waiting queue
                 self.waiting_tasks.insert(task_id);
@@ -288,6 +296,7 @@ impl DagScheduler {
 
     /// stores taska and creates parent->child child->parent links
     fn store_task(&mut self, task_id: TaskId, task: Task, wide_dependecies: Vec<RddPartitionId>) {
+        println!("[+] task: {task:?} deps: {wide_dependecies:?}");
         self.tasks.insert(task_id, task);
         wide_dependecies.iter().for_each(|rpid| {
             self.childs
@@ -367,6 +376,7 @@ impl DagScheduler {
     }
 
     async fn process_bucket_receive_event(&mut self, e: BucketReceivedEvent) {
+        println!("[!] bucket receive event: {:?}", e);
         let received_bucket_set = self
             .bucket_aggr_ids
             .entry(e.wide_partition)
@@ -396,6 +406,7 @@ impl DagScheduler {
             let target_rdd = job.graph.get_rdd(job.target_rdd_id).expect("rdd not found");
 
             let groups = find_groups(&job.graph, job.target_rdd_id);
+            dbg!(&groups);
             println!("[+] dsu done");
             self.groups = groups;
             self.create_stage_tasks(&job.graph, job.target_rdd_id);
@@ -420,7 +431,7 @@ impl DagScheduler {
                 self.store_task(task_id, task, deps);
                 result_stage_tasks.push(task_id);
             }
-            self.stage_tasks.insert(job.target_rdd_id, result_stage_tasks);
+            // self.stage_tasks.insert(job.target_rdd_id, result_stage_tasks);
             println!("[+] result tasks created");
 
             {
@@ -429,12 +440,28 @@ impl DagScheduler {
                     .send(DagMessage::NewGraph(job.graph.clone()))
                     .await
                     .expect("can't send graph to task scheduler");
+
+                let mut received_graphs: HashSet<usize> = Default::default();
+                while let Some(result) = self.event_receiver.recv().await {
+                    match result {
+                        WorkerEvent::GraphReceived(wid) => {
+                            println!("worker {wid} received graph");
+                            received_graphs.insert(wid);
+                            if received_graphs.len() == self.n_workers {
+                                println!("all workers received graphs");
+                                break;
+                            }
+                        },
+                        WorkerEvent::Fail(_) => panic!("Task somehow failed?"),
+                        _ => panic!("wrong event"),
+                    }
+                }
             }
             // TODO: make sure graph is delivered to all workers
             println!("[+] graph sent");
 
             // mby avoid clone
-            for task_id in self.stage_tasks.get(&job.target_rdd_id).unwrap().clone() {
+            for task_id in result_stage_tasks {
                 self.try_submit_task(task_id).await;
             }
             println!("[+] result tasks created");
@@ -468,6 +495,7 @@ impl DagScheduler {
                     }
                     WorkerEvent::Fail(_) => panic!("Task somehow failed?"),
                     WorkerEvent::BucketReceived(e) => self.process_bucket_receive_event(e).await,
+                    WorkerEvent::GraphReceived(_) => panic!("no new graphs sent"),
                 }
             }
         }

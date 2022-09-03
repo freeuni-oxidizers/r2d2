@@ -12,9 +12,6 @@ pub struct Executor {
     // doing Vec<Any> for perf reasons. downcasting is not free
     // This should not be serialized because all workers have this is just a cache
     pub cache: ResultCache,
-    /// Cache which is used to store partial results of shuffle operations
-    // TODO: buckets
-    pub takeout: ResultCache,
     pub received_buckets: Arc<Mutex<HashMap<(RddPartitionId, usize), Vec<u8>>>>,
 }
 
@@ -28,7 +25,6 @@ impl Executor {
     pub fn new() -> Self {
         Self {
             cache: ResultCache::default(),
-            takeout: ResultCache::default(),
             received_buckets: Arc::new(Mutex::new(HashMap::default())),
         }
     }
@@ -105,7 +101,7 @@ impl Executor {
                 let aggred_buckets: Vec<_> = buckets
                     .into_iter()
                     .map(|bucket| work.aggregate_inside_bucket(bucket))
-                    .map(|aggred_bucket| rdd.serialize_raw_data(&aggred_bucket))
+                    .map(|aggred_bucket| rdd.serialize_raw_data(aggred_bucket))
                     .collect();
 
                 return aggred_buckets;
