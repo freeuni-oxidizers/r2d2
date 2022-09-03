@@ -75,42 +75,46 @@ pub(crate) mod bucket_receiver {
 
     /// Receive a bucket from socket
     /// BSP(Bucket Send Protocol) format:
-    /// rdd_id: u32
-    /// partition_id: u32
+    /// wide_rdd_id: u32
+    /// wide_partition_id: u32
+    /// narrow_partition_id: u32
     /// data_len: u64
     /// data: [u8; data_len]
     /// EOF
+    /// TODO: put in cache, notify master(maybe written, check)
     async fn receive_bucket_from_socket(
         worker_id: usize,
         mut socket: TcpStream,
         root_dir: &Path,
     ) -> Result<RddPartitionId, Error> {
-        let rdd_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
-        let partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
+        let wide_rdd_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
+        let wide_partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
+        let narrow_partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
         let data_len = socket.read_u64().await.map_err(|_| Error::NetworkError)?;
-        let rdd_dir = root_dir
-            .join(format!("worker_{worker_id}"))
-            .join(format!("rdd_{rdd_id}"));
-        fs::create_dir_all(&rdd_dir)
-            .await
-            .map_err(|_| Error::FsError)?;
-        let partition_path = rdd_dir.join(format!("partition_{partition_id}"));
-        if partition_path.exists() {
-            return Err(Error::AlreadyExists);
-        }
-        let mut file = fs::File::create(partition_path)
-            .await
-            .map_err(|_| Error::FsError)?;
-        let bytes_copied = tokio::io::copy(&mut socket, &mut file)
-            .await
-            .map_err(|_| Error::NetworkError)?;
-        if bytes_copied != data_len {
-            return Err(Error::NetworkError)?;
-        }
-        Ok(RddPartitionId {
-            rdd_id: RddId(rdd_id as usize),
-            partition_id: partition_id as usize,
-        })
+        todo!()
+        // let rdd_dir = root_dir
+        //     .join(format!("worker_{worker_id}"))
+        //     .join(format!("rdd_{rdd_id}"));
+        // fs::create_dir_all(&rdd_dir)
+        //     .await
+        //     .map_err(|_| Error::FsError)?;
+        // let partition_path = rdd_dir.join(format!("partition_{partition_id}"));
+        // if partition_path.exists() {
+        //     return Err(Error::AlreadyExists);
+        // }
+        // let mut file = fs::File::create(partition_path)
+        //     .await
+        //     .map_err(|_| Error::FsError)?;
+        // let bytes_copied = tokio::io::copy(&mut socket, &mut file)
+        //     .await
+        //     .map_err(|_| Error::NetworkError)?;
+        // if bytes_copied != data_len {
+        //     return Err(Error::NetworkError)?;
+        // }
+        // Ok(RddPartitionId {
+        //     rdd_id: RddId(rdd_id as usize),
+        //     partition_id: partition_id as usize,
+        // })
     }
 
     pub(crate) async fn receiver_loop(
@@ -195,8 +199,8 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
             }
             WorkerMessage::RunTask(task) => {
                 let rdd_pid = RddPartitionId {
-                    rdd_id: task.final_rdd,
-                    partition_id: task.partition_id,
+                    rdd_id: task.wide_rdd_id,
+                    partition_id: task.narrow_partition_id,
                 };
                 // TODO: run this in new os thread
                 let serialized_buckets = executor.resolve_task(&graph, &task);
@@ -210,9 +214,18 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 let bucket_worker_pair =
                     target_addrs.into_iter().zip(serialized_buckets.into_iter());
 
+                let mut bucket_id = 0;
                 bucket_worker_pair.for_each(|(worker_addr, bucket)| {
+                    bucket_id += 1;
                     tokio::spawn(async move {
-                        send_buckets(bucket, worker_addr).await;
+                        send_buckets(
+                            bucket,
+                            worker_addr,
+                            task.wide_rdd_id.0,
+                            bucket_id,
+                            task.narrow_partition_id,
+                        )
+                        .await;
                     });
                 });
 
@@ -256,9 +269,31 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
     std::process::exit(0);
 }
 
-async fn send_buckets(data: Vec<u8>, worker_addr: String) -> Result<(), Box<dyn Error>> {
+/// let rdd_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
+// let partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
+// let data_len = socket.read_u64().await.map_err(|_| Error::NetworkError)?;
+// TODO: if worker_id == self_id -> dont send, just update cache
+/// Receive a bucket from socket
+/// BSP(Bucket Send Protocol) format:
+/// wide_rdd_id: u32
+/// wide_partition_id: u32
+/// narrow_partition_id: u32
+/// data_len: u64
+/// data: [u8; data_len]
+/// done: send according to receive protocol ^
+async fn send_buckets(
+    data: Vec<u8>,
+    worker_addr: String,
+    wide_rdd_id: usize,
+    wide_partition_id: usize,
+    narrow_partition_id: usize,
+) -> Result<(), Box<dyn Error>> {
     let mut stream = TcpStream::connect(worker_addr).await?;
 
+    stream.write_u32(wide_rdd_id as u32).await?;
+    stream.write_u32(wide_partition_id as u32).await?;
+    stream.write_u32(narrow_partition_id as u32).await?;
+    stream.write_u64(data.len() as u64).await?;
     stream.write_all(&data).await?;
 
     Ok(())

@@ -117,9 +117,9 @@ pub struct TaskSet {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Task {
-    pub final_rdd: RddId,
-    pub partition_id: usize,
-    pub num_partitions: usize,
+    pub wide_rdd_id: RddId, // final rdd
+    pub narrow_partition_id: usize,
+    // pub num_partitions: usize,
     pub preffered_worker_id: usize,
     pub target_workers: Vec<usize>,
 }

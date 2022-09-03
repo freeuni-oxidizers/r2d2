@@ -49,9 +49,9 @@ impl DagScheduler {
             // TODO: actually find stages
             for partition_id in 0..target_rdd.partitions_num() {
                 task_set.tasks.push(Task {
-                    final_rdd: job.target_rdd_id,
-                    partition_id,
-                    num_partitions: target_rdd.partitions_num(),
+                    wide_rdd_id: job.target_rdd_id,
+                    narrow_partition_id: partition_id,
+                    // num_partitions: target_rdd.partitions_num(),
                     preffered_worker_id: partition_id % self.n_workers,
                     target_workers: todo!(),
                 })
@@ -80,8 +80,8 @@ impl DagScheduler {
                     WorkerEvent::Success(task, serialized_rdd_data) => {
                         let materialized_partition =
                             target_rdd.deserialize_raw_data(serialized_rdd_data);
-                        assert!(result_v[task.partition_id].is_none());
-                        result_v[task.partition_id] = Some(materialized_partition);
+                        assert!(result_v[task.narrow_partition_id].is_none());
+                        result_v[task.narrow_partition_id] = Some(materialized_partition);
                         num_received += 1;
                         if num_received == target_rdd.partitions_num() {
                             let final_results = result_v.into_iter().map(|v| v.unwrap()).collect();
