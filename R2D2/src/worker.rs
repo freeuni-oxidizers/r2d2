@@ -14,6 +14,9 @@ use tokio::net::TcpStream;
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;
 use tonic::Request;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::Arc;
 
 async fn get_master_client(
     master_addr: String,
@@ -34,10 +37,9 @@ async fn get_master_client(
 
 pub(crate) mod bucket_receiver {
     use core::fmt;
-    use std::path::{Path, PathBuf};
+    use std::{path::{Path, PathBuf}, sync::Arc, collections::HashMap};
 
     use tokio::{
-        fs,
         io::AsyncReadExt,
         net::{TcpListener, TcpStream},
     };
@@ -86,35 +88,21 @@ pub(crate) mod bucket_receiver {
         worker_id: usize,
         mut socket: TcpStream,
         root_dir: &Path,
+        received_buckets: Arc<std::sync::Mutex<HashMap<(RddPartitionId, usize), Vec<u8>>>>,
     ) -> Result<RddPartitionId, Error> {
         let wide_rdd_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
         let wide_partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
         let narrow_partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
         let data_len = socket.read_u64().await.map_err(|_| Error::NetworkError)?;
-        todo!()
-        // let rdd_dir = root_dir
-        //     .join(format!("worker_{worker_id}"))
-        //     .join(format!("rdd_{rdd_id}"));
-        // fs::create_dir_all(&rdd_dir)
-        //     .await
-        //     .map_err(|_| Error::FsError)?;
-        // let partition_path = rdd_dir.join(format!("partition_{partition_id}"));
-        // if partition_path.exists() {
-        //     return Err(Error::AlreadyExists);
-        // }
-        // let mut file = fs::File::create(partition_path)
-        //     .await
-        //     .map_err(|_| Error::FsError)?;
-        // let bytes_copied = tokio::io::copy(&mut socket, &mut file)
-        //     .await
-        //     .map_err(|_| Error::NetworkError)?;
-        // if bytes_copied != data_len {
-        //     return Err(Error::NetworkError)?;
-        // }
-        // Ok(RddPartitionId {
-        //     rdd_id: RddId(rdd_id as usize),
-        //     partition_id: partition_id as usize,
-        // })
+        let mut buf = vec![0_u8; data_len as usize];
+        socket.read_exact(&mut buf[..]).await.map_err(|_| Error::NetworkError)?;
+        let mut buckets = { received_buckets.lock().unwrap() };
+        let rpid = RddPartitionId {
+            rdd_id: RddId(wide_rdd_id as usize),
+            partition_id: wide_partition_id as usize,
+        };
+        buckets.insert((rpid, narrow_partition_id as usize), buf);
+        Ok(rpid)
     }
 
     pub(crate) async fn receiver_loop(
@@ -122,6 +110,7 @@ pub(crate) mod bucket_receiver {
         port: usize,
         fs_root: PathBuf,
         master_client: MasterClient<Channel>,
+        received_buckets: Arc<std::sync::Mutex<HashMap<(RddPartitionId, usize), Vec<u8>>>>,
     ) -> Result<(), Error> {
         let addr = format!("0.0.0.0:{port}");
         let listener = TcpListener::bind(addr)
@@ -131,9 +120,10 @@ pub(crate) mod bucket_receiver {
             if let Ok((socket, _)) = listener.accept().await {
                 let fs_root = fs_root.clone();
                 let mut master_client = master_client.clone();
+                let buckets = received_buckets.clone();
                 tokio::spawn(async move {
                     // TODO: ping master about received bucket
-                    match receive_bucket_from_socket(worker_id, socket, &fs_root).await {
+                    match receive_bucket_from_socket(worker_id, socket, &fs_root, buckets).await {
                         Ok(part_id) => {
                             let worker_event = WorkerEvent::BucketReceived(worker_id, part_id);
                             let result = TaskResultRequest {
@@ -164,11 +154,16 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
     let mut master_conn = get_master_client(format!("http://{}", master_addr))
         .await
         .expect("Worker couldn't connect to master");
+
+    let mut executor = Executor::new();
+
     {
+        let cache = executor.received_buckets.clone();
+
         let master_conn = master_conn.clone();
 
         tokio::spawn(async move {
-            receiver_loop(id, port, fs_root, master_conn)
+            receiver_loop(id, port, fs_root, master_conn, cache)
                 .await
                 .expect("Failed to start bucket receiver loop");
         });
@@ -177,8 +172,8 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
     // master may not be running yet
     println!("Worker #{id} starting");
     let mut graph: Graph = Graph::default();
+
     // Here response.action must be TaskAction::Work
-    let mut executor = Executor::new();
     loop {
         let get_task_response = match master_conn
             .get_task(Request::new(GetTaskRequest { id: id as u32 }))
@@ -214,10 +209,12 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 let bucket_worker_pair =
                     target_addrs.into_iter().zip(serialized_buckets.into_iter());
 
+                // error: locking to loong `for_each`
                 bucket_worker_pair.enumerate().for_each(
                     |(wide_partition_id, ((worker_id, worker_addr), bucket))| {
                         if id == worker_id {
-                            executor.received_buckets.insert(
+                            let mut received_buckets = { executor.received_buckets.lock().unwrap() };
+                            received_buckets.insert(
                                 (
                                     RddPartitionId {
                                         rdd_id: task.wide_rdd_id,
@@ -236,7 +233,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                                     wide_partition_id,
                                     task.narrow_partition_id,
                                 )
-                                .await;
+                                .await.expect("Couldn't send bucket");
                             });
                         }
                     },
