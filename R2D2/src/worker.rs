@@ -209,29 +209,42 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 // TODO: run this in new os thread
                 let serialized_buckets = executor.resolve_task(&graph, &task);
 
-                let target_addrs: Vec<String> = task
+                let target_addrs: Vec<_> = task
                     .target_workers
                     .into_iter()
-                    .map(|worker_id| config.worker_addrs[worker_id].clone())
+                    .map(|worker_id| (worker_id, config.worker_addrs[worker_id].clone()))
                     .collect();
 
                 let bucket_worker_pair =
                     target_addrs.into_iter().zip(serialized_buckets.into_iter());
 
-                let mut bucket_id = 0;
-                bucket_worker_pair.for_each(|(worker_addr, bucket)| {
-                    bucket_id += 1;
-                    tokio::spawn(async move {
-                        send_buckets(
-                            bucket,
-                            worker_addr,
-                            task.wide_rdd_id.0,
-                            bucket_id,
-                            task.narrow_partition_id,
-                        )
-                        .await;
-                    });
-                });
+                bucket_worker_pair.enumerate().for_each(
+                    |(wide_partition_id, ((worker_id, worker_addr), bucket))| {
+                        if id == worker_id {
+                            executor.received_buckets.insert(
+                                (
+                                    RddPartitionId {
+                                        rdd_id: task.wide_rdd_id,
+                                        partition_id: wide_partition_id,
+                                    },
+                                    task.narrow_partition_id,
+                                ),
+                                bucket,
+                            );
+                        } else {
+                            tokio::spawn(async move {
+                                send_buckets(
+                                    bucket,
+                                    worker_addr,
+                                    task.wide_rdd_id.0,
+                                    wide_partition_id,
+                                    task.narrow_partition_id,
+                                )
+                                .await;
+                            });
+                        }
+                    },
+                );
 
                 // tokio::spawn(async move {
                 //     // config.worker_addrs[]
