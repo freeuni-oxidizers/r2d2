@@ -5,7 +5,12 @@ use crate::core::task_scheduler::{WorkerEvent, WorkerMessage};
 use crate::r2d2::master_client::MasterClient;
 use crate::r2d2::{GetTaskRequest, TaskResultRequest};
 use crate::worker::bucket_receiver::receiver_loop;
+use crate::Config;
+use std::error::Error;
 use std::path::PathBuf;
+use std::str::FromStr;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;
 use tonic::Request;
@@ -83,7 +88,9 @@ pub(crate) mod bucket_receiver {
         let rdd_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
         let partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
         let data_len = socket.read_u64().await.map_err(|_| Error::NetworkError)?;
-        let rdd_dir = root_dir.join(format!("worker_{worker_id}")).join(format!("rdd_{rdd_id}"));
+        let rdd_dir = root_dir
+            .join(format!("worker_{worker_id}"))
+            .join(format!("rdd_{rdd_id}"));
         fs::create_dir_all(&rdd_dir)
             .await
             .map_err(|_| Error::FsError)?;
@@ -133,12 +140,12 @@ pub(crate) mod bucket_receiver {
                                 .await
                                 .unwrap();
                         }
-                        Err(e) => {
-                            match e {
-                                Error::FsError => panic!("File system error occured when receiving bucket"),
-                                _ => {}
+                        Err(e) => match e {
+                            Error::FsError => {
+                                panic!("File system error occured when receiving bucket")
                             }
-                        }
+                            _ => {}
+                        },
                     };
                 });
             }
@@ -146,7 +153,7 @@ pub(crate) mod bucket_receiver {
     }
 }
 
-pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf) {
+pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf, config: Config) {
     // let cache: Cache = Arc::new(Mutex::new(HashMap::new()));
     // let cachecp = cache.clone();
 
@@ -186,7 +193,34 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 graph = g;
                 continue;
             }
-            WorkerMessage::RunTask(task) => task,
+            WorkerMessage::RunTask(task) => {
+                let rdd_pid = RddPartitionId {
+                    rdd_id: task.final_rdd,
+                    partition_id: task.partition_id,
+                };
+                // TODO: run this in new os thread
+                let serialized_buckets = executor.resolve_task(&graph, &task);
+
+                let target_addrs: Vec<String> = task
+                    .target_workers
+                    .into_iter()
+                    .map(|worker_id| config.worker_addrs[worker_id].clone())
+                    .collect();
+
+                let bucket_worker_pair =
+                    target_addrs.into_iter().zip(serialized_buckets.into_iter());
+
+                bucket_worker_pair.for_each(|(worker_addr, bucket)| {
+                    tokio::spawn(async move {
+                        send_buckets(bucket, worker_addr).await;
+                    });
+                });
+
+                // tokio::spawn(async move {
+                //     // config.worker_addrs[]
+                //     send_buckets(serialized_buckets, String::from_str("tamta")).await;
+                // });
+            }
             WorkerMessage::Wait => {
                 tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
                 continue;
@@ -196,33 +230,36 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 break;
             }
         };
-        let rdd_pid = RddPartitionId {
-            rdd_id: task.final_rdd,
-            partition_id: task.partition_id,
-        };
-        executor.resolve(&graph, rdd_pid);
 
-        let materialized_rdd_result = graph.get_rdd(task.final_rdd).unwrap().serialize_raw_data(
-            executor
-                .cache
-                .get_as_any(task.final_rdd, task.partition_id)
-                .unwrap(),
-        );
+        // let materialized_rdd_result = graph.get_rdd(task.final_rdd).unwrap().serialize_raw_data(
+        //     executor
+        //         .cache
+        //         .get_as_any(task.final_rdd, task.partition_id)
+        //         .unwrap(),
+        // );
 
-        let worker_event = WorkerEvent::Success(task, materialized_rdd_result);
-        let result = TaskResultRequest {
-            serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
-        };
-        println!("worker={} got result={:?}", id, result);
-        // cache
-        //     .lock()
-        //     .unwrap()
-        //     .insert(rdd_pid, result.serialized_task_result.clone());
-        master_conn
-            .post_task_result(Request::new(result))
-            .await
-            .unwrap();
+        // let worker_event = WorkerEvent::Success(task, materialized_rdd_result);
+        // let result = TaskResultRequest {
+        //     serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
+        // };
+        // println!("worker={} got result={:?}", id, result);
+        // // cache
+        // //     .lock()
+        // //     .unwrap()
+        // //     .insert(rdd_pid, result.serialized_task_result.clone());
+        // master_conn
+        //     .post_task_result(Request::new(result))
+        //     .await
+        //     .unwrap();
     }
     println!("\n\nWoker #{id} shutting down\n\n");
     std::process::exit(0);
+}
+
+async fn send_buckets(data: Vec<u8>, worker_addr: String) -> Result<(), Box<dyn Error>> {
+    let mut stream = TcpStream::connect(worker_addr).await?;
+
+    stream.write_all(&data).await?;
+
+    Ok(())
 }

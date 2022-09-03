@@ -61,7 +61,14 @@ impl Spark {
 
         if !args.master {
             let jh = tokio::spawn(async move {
-                worker::start(args.id, args.port, config.master_addr.clone(), args.fs_root).await;
+                worker::start(
+                    args.id,
+                    args.port,
+                    config.master_addr.clone(),
+                    args.fs_root,
+                    config,
+                )
+                .await;
                 // this fn call never returns
             });
             jh.await.unwrap();

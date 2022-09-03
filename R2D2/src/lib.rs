@@ -37,7 +37,7 @@ pub struct Args {
 }
 
 #[derive(Deserialize)]
-struct Config {
+pub struct Config {
     worker_addrs: Vec<String>,
     master_addr: String,
 }

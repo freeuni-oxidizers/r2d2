@@ -71,7 +71,7 @@ impl Executor {
         };
     }
 
-    fn resolve_task(&mut self, graph: &Graph, task: Task) -> Vec<Vec<u8>> {
+    pub fn resolve_task(&mut self, graph: &Graph, task: &Task) -> Vec<Vec<u8>> {
         assert!(graph.contains(task.final_rdd), "id not found in context");
         // TODO: check if buckets are already on the disk and return without futher computations
 
