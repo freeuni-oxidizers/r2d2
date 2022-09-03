@@ -78,7 +78,11 @@ pub trait NarrowRddWork {
     // TODO: Is being generic over DataFetcher here fine???
     // maybe do enum_dispatch
     // TODO: maybe instead of ResultCache arg should be Vec<dyn Any> (materialized deps)
-    fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any + Send>;
+    fn work(
+        &self,
+        input_partition: Option<Box<dyn Any + Send>>,
+        partition_id: usize,
+    ) -> Box<dyn Any + Send>;
 }
 
 trait TypedRddWideWork: TypedRdd<Item = (Self::K, Self::C)> {
@@ -202,9 +206,14 @@ impl Clone for Box<dyn RddBase> {
 }
 
 trait TypedNarrowRddWork {
-    type Item: Data;
+    type InputItem: Data;
+    type OutputItem: Data;
 
-    fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item>;
+    fn work(
+        &self,
+        input_partition: Option<Vec<Self::InputItem>>,
+        partition_id: usize,
+    ) -> Vec<Self::OutputItem>;
 }
 
 /// methods for Rdd which are dependent on `Item` type
@@ -232,8 +241,13 @@ impl<T> NarrowRddWork for T
 where
     T: TypedNarrowRddWork,
 {
-    fn work(&self, cache: &ResultCache, partition_id: usize) -> Box<dyn Any + Send> {
-        Box::new(Self::work(self, cache, partition_id))
+    fn work(
+        &self,
+        input_partition: Option<Box<dyn Any + Send>>,
+        partition_id: usize,
+    ) -> Box<dyn Any + Send> {
+        let typed_input = input_partition.map(|input| *input.downcast().unwrap());
+        Box::new(Self::work(self, typed_input, partition_id))
     }
 }
 

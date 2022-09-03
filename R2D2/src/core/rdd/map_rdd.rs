@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::core::cache::ResultCache;
-
 use super::{Data, Dependency, RddBase, RddId, RddIndex, RddWorkFns, TypedNarrowRddWork, TypedRdd};
 
 pub trait Mapper: Data {
@@ -52,12 +50,19 @@ where
     U: Data,
     M: Mapper<In = T, Out = U>,
 {
-    type Item = U;
+    type InputItem = T;
+    type OutputItem = U;
 
-    fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item> {
-        // TODO: pass dependency in don't just take
-        let v = cache.take_as(self.prev, partition_id).unwrap();
-        let g: Vec<U> = v.into_iter().map(|v| self.mapper.map(v)).collect();
+    fn work(
+        &self,
+        input_partition: Option<Vec<Self::InputItem>>,
+        partition_id: usize,
+    ) -> Vec<Self::OutputItem> {
+        let g: Vec<U> = input_partition
+            .unwrap()
+            .into_iter()
+            .map(|v| self.mapper.map(v))
+            .collect();
         g
     }
 }

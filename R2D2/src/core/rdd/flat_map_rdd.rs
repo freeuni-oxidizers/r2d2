@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::core::cache::ResultCache;
-
 use super::{Data, Dependency, RddBase, RddId, RddIndex, RddWorkFns, TypedNarrowRddWork, TypedRdd};
 
 /// Imagine you have Rdd<Vec<T>> and want to get Rdd<T>. In this case each map would take element
@@ -60,12 +58,16 @@ where
     I: IntoIterator<Item = U>,
     M: FlatMapper<In = T, OutIterable = I>,
 {
-    type Item = U;
+    type InputItem = T;
+    type OutputItem = U;
 
-    fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item> {
-        // TODO: pass dependency in don't just take
-        let v = cache.take_as(self.prev, partition_id).unwrap();
-        let g: Vec<U> = v
+    fn work(
+        &self,
+        input_partition: Option<Vec<Self::InputItem>>,
+        partition_id: usize,
+    ) -> Vec<Self::OutputItem> {
+        let g: Vec<U> = input_partition
+            .unwrap()
             .into_iter()
             .flat_map(|v| self.flat_mapper.map(v))
             .collect();
