@@ -1,10 +1,10 @@
-use std::{any::Any, collections::HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::core::rdd::{shuffle_rdd::Aggregator, Dependency, RddWideWork, RddWorkFns};
+use crate::core::rdd::{Dependency, RddWorkFns};
 
-use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::Task};
+use super::{cache::ResultCache, graph::Graph, rdd::RddPartitionId, task_scheduler::WideTask};
 
 pub struct Executor {
     /// Cache which stores full partitions ready for next rdd
@@ -32,7 +32,7 @@ impl Executor {
             received_buckets: Arc::new(Mutex::new(HashMap::default())),
         }
     }
-    
+
     // pub fn resolve
     pub fn resolve(&mut self, graph: &Graph, id: RddPartitionId) {
         assert!(graph.contains(id.rdd_id), "id not found in context");
@@ -67,7 +67,7 @@ impl Executor {
                     let buckets: Vec<_> = (0..narrow_partition_nums)
                         .map(|narrow_partition_id| {
                             rdd.deserialize_raw_data(
-                                received_buckets.remove(&(id, narrow_partition_id)) .unwrap(),
+                                received_buckets.remove(&(id, narrow_partition_id)).unwrap(),
                             )
                         })
                         .collect();
@@ -79,7 +79,7 @@ impl Executor {
         };
     }
 
-    pub fn resolve_task(&mut self, graph: &Graph, task: &Task) -> Vec<Vec<u8>> {
+    pub fn resolve_task(&mut self, graph: &Graph, task: &WideTask) -> Vec<Vec<u8>> {
         assert!(graph.contains(task.wide_rdd_id), "id not found in context");
         // TODO: check if buckets are already on the disk and return without futher computations
 

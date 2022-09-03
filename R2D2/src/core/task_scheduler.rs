@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::{
+    dag_scheduler::TaskId,
     graph::Graph,
     rdd::{RddId, RddPartitionId},
 };
@@ -14,17 +15,24 @@ pub enum FailReason {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketReceivedEvent {
+    pub worker_id: usize,
+    pub wide_partition: RddPartitionId,
+    pub narrow_partition_id: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkerEvent {
     Success(Task, Vec<u8>),
-    // worker_id, partition_id
-    BucketReceived(usize, RddPartitionId),
+    // worker_id, RddId, bucket_id
+    BucketReceived(BucketReceivedEvent),
     Fail(FailReason),
 }
 
 #[derive(Debug)]
 pub enum DagMessage {
     NewGraph(Graph),
-    SubmitTaskSet(TaskSet),
+    SubmitTask(Task),
 }
 
 /// This will go to worker over network
@@ -75,13 +83,11 @@ impl TaskScheduler {
                         .expect("Can't send graph to rpc server")
                 }
             }
-            DagMessage::SubmitTaskSet(task_set) => {
-                for task in task_set.tasks {
-                    self.worker_queues[task.preffered_worker_id]
-                        .send(WorkerMessage::RunTask(task))
-                        .await
-                        .expect("Can't send task to rpc server");
-                }
+            DagMessage::SubmitTask(task) => {
+                self.worker_queues[task.worker_id]
+                    .send(WorkerMessage::RunTask(task))
+                    .await
+                    .expect("Can't send task to rpc server");
             }
         }
     }
@@ -108,18 +114,30 @@ impl TaskScheduler {
     }
 }
 
-#[derive(Debug)]
-pub struct TaskSet {
-    // TODO: do JobId newtype
-    // job_id: usize,
-    pub tasks: Vec<Task>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WideTask {
+    pub wide_rdd_id: RddId,
+    // need this on master. sry :')
+    pub narrow_rdd_id: RddId,
+    pub narrow_partition_id: usize,
+    pub target_workers: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResultTask {
+    pub rdd_partition_id: RddPartitionId,
+}
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TaskKind {
+    ResultTask(ResultTask),
+    WideTask(WideTask),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Task {
-    pub wide_rdd_id: RddId, // final rdd
-    pub narrow_partition_id: usize,
-    // pub num_partitions: usize,
-    pub preffered_worker_id: usize,
-    pub target_workers: Vec<usize>,
+    pub id: TaskId,
+    pub worker_id: usize,
+    pub kind: TaskKind,
 }
