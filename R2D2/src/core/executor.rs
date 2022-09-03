@@ -54,12 +54,11 @@ impl Executor {
             RddWorkFns::Narrow(narrow_work) => {
                 let rdd = graph.get_rdd(id.rdd_id).unwrap();
                 let res = match rdd.rdd_dependency() {
-                    Dependency::Narrow(prev_rdd) => {
-                        narrow_work.work(self.cache.take_as_any(prev_rdd, id.partition_id), id.partition_id)
-                    },
-                    Dependency::No => {
-                        narrow_work.work(None, id.partition_id)
-                    },
+                    Dependency::Narrow(prev_rdd) => narrow_work.work(
+                        self.cache.take_as_any(prev_rdd, id.partition_id),
+                        id.partition_id,
+                    ),
+                    Dependency::No => narrow_work.work(None, id.partition_id),
                     Dependency::Wide(_) => unreachable!(),
                 };
                 self.cache.put(id, res);
