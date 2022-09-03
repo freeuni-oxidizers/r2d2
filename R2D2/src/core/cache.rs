@@ -35,7 +35,7 @@ impl ResultCache {
         partition_id: usize,
         cache: bool,
     ) -> Option<Vec<T>> {
-        let map = self.data.lock().unwrap();
+        let mut map = self.data.lock().unwrap();
         let rpid = RddPartitionId {
             rdd_id: rdd.id,
             partition_id,
@@ -63,7 +63,7 @@ impl ResultCache {
         partition_id: usize,
     ) -> Option<Box<dyn Any + Send>> {
 
-        let map = self.data.lock().unwrap();
+        let mut map = self.data.lock().unwrap();
         let rpid = RddPartitionId {
             rdd_id,
             partition_id,

@@ -49,7 +49,7 @@ where
     fn work(
         &self,
         input_partition: Option<Vec<Self::InputItem>>,
-        partition_id: usize,
+        _partition_id: usize,
     ) -> Vec<Self::OutputItem> {
         let g: Vec<T> = input_partition
             .unwrap()

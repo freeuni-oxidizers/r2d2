@@ -6,8 +6,6 @@ use std::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use super::cache::ResultCache;
-
 // TODO: maybe add uuid so that we can't pass one rdd index to another context
 #[derive(Serialize, Deserialize)]
 pub struct RddIndex<T> {
