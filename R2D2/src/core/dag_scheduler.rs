@@ -303,7 +303,7 @@ impl DagScheduler {
         match rdd.rdd_dependency() {
             Dependency::Narrow(dep_rdd_id) => self.create_stage_tasks(graph, dep_rdd_id),
             Dependency::Wide(dep_rdd_id) => {
-                self.create_stage_tasks(graph, rdd_id);
+                self.create_stage_tasks(graph, dep_rdd_id);
                 let mut stage_tasks = Vec::new();
                 let prev_rdd = graph.get_rdd(dep_rdd_id).unwrap();
                 for narrow_partition_id in 0..prev_rdd.partitions_num() {
@@ -391,13 +391,15 @@ impl DagScheduler {
     pub async fn start(mut self) {
         println!("Dag scheduler is running!");
         while let Some(job) = self.job_receiver.recv().await {
-            println!("new job received target_rdd_id={:?}", job.target_rdd_id);
+            println!("[+] new job received target_rdd_id={:?}", job.target_rdd_id);
 
             let target_rdd = job.graph.get_rdd(job.target_rdd_id).expect("rdd not found");
 
             let groups = find_groups(&job.graph, job.target_rdd_id);
+            println!("[+] dsu done");
             self.groups = groups;
             self.create_stage_tasks(&job.graph, job.target_rdd_id);
+            println!("[+] wide tasks created");
 
             let mut result_stage_tasks = Vec::new();
             for partition_id in 0..target_rdd.partitions_num() {
@@ -419,6 +421,7 @@ impl DagScheduler {
                 result_stage_tasks.push(task_id);
             }
             self.stage_tasks.insert(job.target_rdd_id, result_stage_tasks);
+            println!("[+] result tasks created");
 
             {
                 // send over graph to task scheduler
@@ -428,11 +431,13 @@ impl DagScheduler {
                     .expect("can't send graph to task scheduler");
             }
             // TODO: make sure graph is delivered to all workers
+            println!("[+] graph sent");
 
             // mby avoid clone
             for task_id in self.stage_tasks.get(&job.target_rdd_id).unwrap().clone() {
                 self.try_submit_task(task_id).await;
             }
+            println!("[+] result tasks created");
 
             let mut result_v: Vec<Option<Box<dyn Any + Send>>> = Vec::new();
             for _ in 0..target_rdd.partitions_num() {

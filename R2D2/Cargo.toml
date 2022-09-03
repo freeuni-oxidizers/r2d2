@@ -29,4 +29,3 @@ async-recursion = "1.0.0"
 [build-dependencies]
 tonic-build = "0.8"
 
-

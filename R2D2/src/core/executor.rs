@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use crate::core::rdd::{Dependency, RddWorkFns};
 
@@ -13,7 +15,7 @@ pub struct Executor {
     /// Cache which is used to store partial results of shuffle operations
     // TODO: buckets
     pub takeout: ResultCache,
-    pub received_buckets: HashMap<(RddPartitionId, usize), Vec<u8>>,
+    pub received_buckets: Arc<Mutex<HashMap<(RddPartitionId, usize), Vec<u8>>>>,
 }
 
 impl Default for Executor {
@@ -27,9 +29,10 @@ impl Executor {
         Self {
             cache: ResultCache::default(),
             takeout: ResultCache::default(),
-            received_buckets: HashMap::default(),
+            received_buckets: Arc::new(Mutex::new(HashMap::default())),
         }
     }
+
     // pub fn resolve
     pub fn resolve(&mut self, graph: &Graph, id: RddPartitionId) {
         assert!(graph.contains(id.rdd_id), "id not found in context");
@@ -38,15 +41,14 @@ impl Executor {
         }
 
         let rdd_type = graph.get_rdd(id.rdd_id).unwrap().rdd_dependency();
-        match rdd_type {
-            Dependency::Narrow(dep_rdd) => self.resolve(
+        if let Dependency::Narrow(dep_rdd) = rdd_type {
+            self.resolve(
                 graph,
                 RddPartitionId {
                     rdd_id: dep_rdd,
                     partition_id: id.partition_id,
                 },
-            ),
-            _ => {}
+            )
         };
         // First resolve all the deps
 
@@ -61,12 +63,11 @@ impl Executor {
 
                 if let Dependency::Wide(depp) = graph.get_rdd(id.rdd_id).unwrap().rdd_dependency() {
                     let narrow_partition_nums = graph.get_rdd(depp).unwrap().partitions_num();
+                    let mut received_buckets = { self.received_buckets.lock().unwrap() };
                     let buckets: Vec<_> = (0..narrow_partition_nums)
                         .map(|narrow_partition_id| {
                             rdd.deserialize_raw_data(
-                                self.received_buckets
-                                    .remove(&(id, narrow_partition_id))
-                                    .unwrap(),
+                                received_buckets.remove(&(id, narrow_partition_id)).unwrap(),
                             )
                         })
                         .collect();
