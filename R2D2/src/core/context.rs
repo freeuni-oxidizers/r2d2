@@ -54,7 +54,7 @@ pub trait Context {
         mapper: M,
     ) -> RddIndex<U>;
 
-    fn map_partitions<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(Vec<T>) -> Vec<U>) -> RddIndex<U>;
+    fn map_partitions<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(Vec<T>, usize) -> Vec<U>) -> RddIndex<U>;
 
     fn map_partitions_with_state<T: Data, U: Data, M: PartitionMapper<In=T, Out=U>>(&mut self, rdd: RddIndex<T>, map_partitioner: M) -> RddIndex<U>;
 

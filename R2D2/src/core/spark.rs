@@ -7,7 +7,8 @@ use crate::{core::rdd::shuffle_rdd::Aggregator, master::MasterService, worker, A
 use self::{
     group_by::GroupByAggregator,
     partition_by::{DummyPartitioner, FinishingFlatten, MapUsingPartitioner},
-    sum_by_key::SumByKeyAggregator, sample_partitioner::SamplePartitioner,
+    sample_partitioner::SamplePartitioner,
+    sum_by_key::SumByKeyAggregator,
 };
 
 use super::{
@@ -18,9 +19,10 @@ use super::{
         data_rdd::DataRdd,
         filter_rdd::{FilterRdd, FnPtrFilterer},
         flat_map_rdd::{FlatMapRdd, FnPtrFlatMapper},
+        map_partitions::{FnPtrPartitionMapper, MapPartitionsRdd, PartitionMapper},
         map_rdd::{FnPtrMapper, MapRdd, Mapper},
         shuffle_rdd::{Partitioner, ShuffleRdd},
-        Data, RddId, RddIndex, map_partitions::{PartitionMapper, FnPtrPartitionMapper, MapPartitionsRdd},
+        Data, RddId, RddIndex,
     },
     task_scheduler::{DagMessage, TaskScheduler, WorkerEvent, WorkerMessage},
 };
@@ -121,20 +123,20 @@ impl Spark {
             .collect()
     }
 
-    pub async fn sort<T>(&mut self, rdd: RddIndex<T>) -> RddIndex<T> 
+    pub async fn sort<T>(&mut self, rdd: RddIndex<T>) -> RddIndex<T>
     where
-        T: Data + std::cmp::Ord,  
+        T: Data + std::cmp::Ord,
     {
         let num_buckets = 10;
-let sample_rdd = self.sample(rdd, num_buckets);
+        let sample_rdd = self.sample(rdd, num_buckets);
         let sample = self.collect(sample_rdd).await;
         let partitioner = SamplePartitioner::new(sample);
         let rdd = self.partition_by(rdd, partitioner);
-        self.map_partitions(rdd, |mut v: Vec<T>| {
+        self.map_partitions(rdd, |mut v: Vec<T>, _| {
             v.sort();
             v
         })
-    }   
+    }
 }
 
 mod sum_by_key {
@@ -295,12 +297,12 @@ impl Context for Spark {
         self.shuffle(rdd, partitioner, SumByKeyAggregator::new())
     }
 
-     fn sample<T>(&mut self, rdd: RddIndex<T>, amount: usize) -> RddIndex<T> 
-     where 
-         T: Data,
-     {
-         self.map_partitions_with_state(rdd, sampler::Sampler::new(amount))
-     }
+    fn sample<T>(&mut self, rdd: RddIndex<T>, amount: usize) -> RddIndex<T>
+    where
+        T: Data,
+    {
+        self.map_partitions_with_state(rdd, sampler::Sampler::new(amount))
+    }
 
     fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(T) -> U) -> RddIndex<U> {
         let idx = RddIndex::new(RddId::new());
@@ -330,7 +332,11 @@ impl Context for Spark {
         idx
     }
 
-    fn map_partitions<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(Vec<T>) -> Vec<U>) -> RddIndex<U> {
+    fn map_partitions<T: Data, U: Data>(
+        &mut self,
+        rdd: RddIndex<T>,
+        f: fn(Vec<T>, usize) -> Vec<U>,
+    ) -> RddIndex<U> {
         let idx = RddIndex::new(RddId::new());
         let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
         self.graph.store_new_rdd(MapPartitionsRdd {
@@ -340,11 +346,13 @@ impl Context for Spark {
             map_partitioner: FnPtrPartitionMapper(f),
         });
         idx
-
     }
 
-
-    fn map_partitions_with_state<T: Data, U: Data, M: PartitionMapper<In=T, Out=U>>(&mut self, rdd: RddIndex<T>, map_partitioner: M) -> RddIndex<U> {
+    fn map_partitions_with_state<T: Data, U: Data, M: PartitionMapper<In = T, Out = U>>(
+        &mut self,
+        rdd: RddIndex<T>,
+        map_partitioner: M,
+    ) -> RddIndex<U> {
         let idx = RddIndex::new(RddId::new());
         let partitions_num = self.graph.get_rdd(rdd.id).unwrap().partitions_num();
         self.graph.store_new_rdd(MapPartitionsRdd {
@@ -354,7 +362,6 @@ impl Context for Spark {
             map_partitioner,
         });
         idx
-
     }
 
     fn flat_map<T: Data, U: Data, I: IntoIterator<Item = U> + Data>(
@@ -410,10 +417,10 @@ impl Context for Spark {
 }
 
 mod sampler {
-    use std::marker::PhantomData;
     use crate::core::rdd::{map_partitions::PartitionMapper, Data};
-    use rand::{thread_rng, seq::IteratorRandom};
+    use rand::{seq::IteratorRandom, thread_rng};
     use serde::{Deserialize, Serialize};
+    use std::marker::PhantomData;
 
     #[derive(Serialize, Deserialize, Clone)]
     pub struct Sampler<T> {
@@ -438,9 +445,10 @@ mod sampler {
 
         type Out = T;
 
-        fn map_partitions(&self, v: Vec<Self::In>) -> Vec<Self::Out> {
+        fn map_partitions(&self, v: Vec<Self::In>, _partitition_id: usize) -> Vec<Self::Out> {
             // TODO: make it deterministic?
-            v.into_iter().choose_multiple(&mut thread_rng(), self.amount) 
+            v.into_iter()
+                .choose_multiple(&mut thread_rng(), self.amount)
         }
     }
 }
@@ -600,7 +608,7 @@ pub mod sample_partitioner {
         }
 
         fn partititon_by(&self, key: &Self::Key) -> usize {
-            self.sample.partition_point(|x| *x < *key)  
+            self.sample.partition_point(|x| *x < *key)
         }
     }
 }

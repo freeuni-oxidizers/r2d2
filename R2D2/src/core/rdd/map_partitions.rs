@@ -1,19 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-use crate::core::cache::ResultCache;
-
 use super::{Data, Dependency, RddBase, RddId, RddIndex, RddWorkFns, TypedNarrowRddWork, TypedRdd};
 
 pub trait PartitionMapper: Data {
     type In: Data;
     type Out: Data;
 
-    fn map_partitions(&self, v: Vec<Self::In>) -> Vec<Self::Out>;
+    fn map_partitions(&self, v: Vec<Self::In>, partition_id: usize) -> Vec<Self::Out>;
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct FnPtrPartitionMapper<T, U>(#[serde(with = "serde_fp")] pub fn(Vec<T>) -> Vec<U>);
-
+pub struct FnPtrPartitionMapper<T, U>(#[serde(with = "serde_fp")] pub fn(Vec<T>, usize) -> Vec<U>);
 
 impl<T, U> PartitionMapper for FnPtrPartitionMapper<T, U>
 where
@@ -24,8 +21,8 @@ where
 
     type Out = U;
 
-    fn map_partitions(&self, v: Vec<Self::In>) -> Vec<Self::Out> {
-        self.0(v)
+    fn map_partitions(&self, v: Vec<Self::In>, partition_id: usize) -> Vec<Self::Out> {
+        self.0(v, partition_id)
     }
 }
 
@@ -53,12 +50,16 @@ where
     U: Data,
     M: PartitionMapper<In = T, Out = U>,
 {
-    type Item = U;
+    type InputItem = T;
 
-    fn work(&self, cache: &ResultCache, partition_id: usize) -> Vec<Self::Item> {
-        // TODO: pass dependency in don't just take
-        let v = cache.take_as(self.prev, partition_id).unwrap();
-        self.map_partitioner.map_partitions(v)
+    type OutputItem = U;
+
+    fn work(
+        &self,
+        input_partition: Option<Vec<Self::InputItem>>,
+        partition_id: usize,
+    ) -> Vec<Self::OutputItem> {
+        self.map_partitioner.map_partitions(input_partition.unwrap(), partition_id)
     }
 }
 
