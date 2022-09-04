@@ -2,6 +2,7 @@ use std::{hash::Hash, ops::Add};
 
 use super::rdd::{
     map_rdd::Mapper,
+    map_partitions::PartitionMapper,
     shuffle_rdd::{Aggregator, Partitioner},
     Data, RddIndex, flat_map_rdd::FlatMapper,
 };
@@ -26,9 +27,15 @@ pub trait Context {
     where
         K: Eq + Hash,
         P: Partitioner<Key = K>;
+    
+    fn sample<T>(&mut self, rdd: RddIndex<T>, amount: usize) -> RddIndex<T> 
+    where 
+        T: Data;
+    
     fn partition_by<T: Data, P>(&mut self, rdd: RddIndex<T>, partitioner: P) -> RddIndex<T>
     where
         P: Partitioner<Key = T>;
+
     fn sum_by_key<K: Data, V: Data, P>(
         &mut self,
         rdd: RddIndex<(K, V)>,
@@ -40,11 +47,16 @@ pub trait Context {
         P: Partitioner<Key = K>;
 
     fn map<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(T) -> U) -> RddIndex<U>;
+
     fn map_with_state<T: Data, U: Data, M: Mapper<In = T, Out = U>>(
         &mut self,
         rdd: RddIndex<T>,
         mapper: M,
     ) -> RddIndex<U>;
+
+    fn map_partitions<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(Vec<T>) -> Vec<U>) -> RddIndex<U>;
+
+    fn map_partitions_with_state<T: Data, U: Data, M: PartitionMapper<In=T, Out=U>>(&mut self, rdd: RddIndex<T>, map_partitioner: M) -> RddIndex<U>;
 
     fn flat_map<T: Data, U: Data, I: IntoIterator<Item = U> + Data>(
         &mut self,
