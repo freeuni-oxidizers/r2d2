@@ -123,13 +123,16 @@ impl Spark {
             .collect()
     }
 
-    pub async fn sort<T>(&mut self, rdd: RddIndex<T>) -> RddIndex<T>
+    pub async fn sort<T>(&mut self, rdd: RddIndex<T>, num_partitions: usize) -> RddIndex<T>
     where
         T: Data + std::cmp::Ord,
     {
-        let num_buckets = 10;
-        let sample_rdd = self.sample(rdd, num_buckets);
-        let sample = self.collect(sample_rdd).await;
+        let num_partitions = num_partitions - 1;
+        let sample_rdd = self.sample(rdd, num_partitions);
+        let mut sample = self.collect(sample_rdd).await;
+        sample.sort();
+        let step = sample.len() / num_partitions;
+        let sample: Vec<_> = sample.into_iter().step_by(step).take(num_partitions).collect();
         let partitioner = SamplePartitioner::new(sample);
         let rdd = self.partition_by(rdd, partitioner);
         self.map_partitions(rdd, |mut v: Vec<T>, _| {

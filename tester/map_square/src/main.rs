@@ -28,7 +28,7 @@ async fn main() {
         vec![3000000],
     ];
     let rdd = spark.new_from_list(data);
-    let rdd = spark.sort(rdd).await;
+    let rdd = spark.sort(rdd, 2).await;
     let result = spark.collect(rdd).await;
     println!("client code received result = {:?}", result);
 
