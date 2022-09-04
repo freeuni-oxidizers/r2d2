@@ -16,3 +16,4 @@ Cargo.lock
 wow.json
 
 .idea
+spark_job_output

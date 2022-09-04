@@ -1,4 +1,7 @@
+use std::{fmt::format, path::PathBuf};
+
 use clap::Parser;
+use rand::Rng;
 use R2D2::{
     core::{context::Context, spark::Spark},
     Args,
@@ -19,18 +22,38 @@ async fn main() {
     // let rdd = spark.filter(rdd, |x| x % 2 == 0);
     // let rdd = spark.flat_map(rdd, |x| x);
     // let rdd = spark.map(rdd, |x| (x, 1));
-    let data = vec![
-        vec![2000000],
-        vec![10000],
-        vec![3],
-        vec![1000000],
-        vec![3000000],
-        vec![3000000],
-    ];
+    let mut input = [0; 100];
+    for i in 0..100 {
+        input[i] = rand::thread_rng().gen();
+    }
+    dbg!(input);
+
+    let data = vec![input.to_vec()];
+
     let rdd = spark.new_from_list(data);
-    let rdd = spark.sort(rdd, 2).await;
-    let result = spark.collect(rdd).await;
-    println!("client code received result = {:?}", result);
+    let rdd = spark.sort(rdd, 10).await;
+    // let rdd = spark.map_partitions(rdd, |partition, partition_id| {
+    //     let file_name = format!("out_{partition_id}");
+    //     let file_data = format!("{:?}", partition);
+    //     vec![(file_name, file_data.as_bytes().to_owned())]
+    // });
+    // Rdd<T>
+
+    // let sorted = spark.collect(rdd).await;
+    // input.sort();
+    // assert_eq!(sorted, input);
+
+    spark
+        .save(
+            rdd,
+            |partition| format!("{:?}", partition).into_bytes(),
+            PathBuf::from("spark_job_output"),
+        )
+        .await;
+
+    // Rdd<(path, data)>
+    // let result = spark.collect(rdd).await;
+    // println!("client code received result = {:?}", result);
 
     // let rdd = spark.map(rdd, |x| vec![x; x]);
     // let rdd = spark.flat_map(rdd, |x| x);

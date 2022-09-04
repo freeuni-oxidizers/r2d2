@@ -1,10 +1,11 @@
-use std::{fmt::Debug, ops::Add, process::exit};
+use std::{fmt::Debug, ops::Add, path::PathBuf, process::exit};
 
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{core::rdd::shuffle_rdd::Aggregator, master::MasterService, worker, Args, Config};
 
 use self::{
+    file_writer::FileWriter,
     group_by::GroupByAggregator,
     partition_by::{DummyPartitioner, FinishingFlatten, MapUsingPartitioner},
     sample_partitioner::SamplePartitioner,
@@ -26,6 +27,7 @@ use super::{
     },
     task_scheduler::{DagMessage, TaskScheduler, WorkerEvent, WorkerMessage},
 };
+use std::fs;
 
 // TODO(zvikinoza): extract this to sep file
 // and use SparkContext as lib from rdd-simple
@@ -122,23 +124,89 @@ impl Spark {
             .flat_map(|vany| (*vany.downcast::<Vec<T>>().unwrap()))
             .collect()
     }
+    // input: (path, content)
+    // pub async fn save(&mut self, rdd: RddIndex<(PathBuf,)>, path: PathBuf) {
+    //     self.map_partitions_with_state(rdd, FileWriter::new(path));
+    // }
+
+    // spark.save(rdd, |partition: Vec<T>|-> Vec<u8>, directory).await;
+    pub async fn save<T: Data>(
+        &mut self,
+        rdd: RddIndex<T>,
+        serializer: fn(Vec<T>) -> Vec<u8>,
+        path: PathBuf,
+    ) {
+        let rdd = self.map_partitions_with_state(rdd, FileWriter::new(path, serializer));
+        self.collect(rdd).await;
+    }
+
+    pub async fn read_partitions_from<T>(
+        &mut self,
+        path: PathBuf,
+        num_partitions: usize,
+    ) -> RddIndex<(PathBuf, Vec<u8>)> {
+        unimplemented!()
+    }
 
     pub async fn sort<T>(&mut self, rdd: RddIndex<T>, num_partitions: usize) -> RddIndex<T>
     where
-        T: Data + std::cmp::Ord,
+        T: Data + std::cmp::Ord + Debug,
     {
-        let num_partitions = num_partitions - 1;
         let sample_rdd = self.sample(rdd, num_partitions);
         let mut sample = self.collect(sample_rdd).await;
         sample.sort();
-        let step = sample.len() / num_partitions;
-        let sample: Vec<_> = sample.into_iter().step_by(step).take(num_partitions).collect();
-        let partitioner = SamplePartitioner::new(sample);
+
+        let mut dividers = Vec::new();
+        for i in 1..num_partitions {
+            dividers.push(sample[i * sample.len() / num_partitions].clone())
+        }
+
+        let partitioner = SamplePartitioner::new(dividers);
         let rdd = self.partition_by(rdd, partitioner);
         self.map_partitions(rdd, |mut v: Vec<T>, _| {
             v.sort();
             v
         })
+    }
+}
+
+mod file_writer {
+    use crate::core::rdd::{map_partitions::PartitionMapper, Data};
+    use rand::{seq::IteratorRandom, thread_rng};
+    use serde::{Deserialize, Serialize};
+    use std::{marker::PhantomData, path::PathBuf};
+
+    #[derive(Serialize, Deserialize, Clone)]
+    pub struct FileWriter<T: Data> {
+        path: PathBuf,
+        #[serde(with = "serde_fp")]
+        serializer: fn(Vec<T>) -> Vec<u8>,
+    }
+
+    impl<T: Data> FileWriter<T> {
+        pub fn new(path: PathBuf, serializer: fn(Vec<T>) -> Vec<u8>) -> Self {
+            Self { path, serializer }
+        }
+    }
+    impl<T> PartitionMapper for FileWriter<T>
+    where
+        T: Data,
+    {
+        type In = T;
+        type Out = ();
+
+        // Rdd<T> -> <./, Vec<T> -> Vec<u8>>
+        // Rdd<(K, V)> K -> V
+        fn map_partitions(&self, v: Vec<Self::In>, _partitition_id: usize) -> Vec<Self::Out> {
+            // TODO: make it deterministic?
+            let serialized_partition = (self.serializer)(v);
+            std::fs::write(
+                self.path.join(_partitition_id.to_string()),
+                serialized_partition,
+            )
+            .unwrap();
+            Vec::new()
+        }
     }
 }
 
