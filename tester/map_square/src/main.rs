@@ -1,6 +1,6 @@
 use clap::Parser;
 use R2D2::{
-    core::{context::Context, spark::{Spark, hash_partitioner::HashPartitioner}},
+    core::{context::Context, spark::Spark},
     Args,
 };
 
