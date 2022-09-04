@@ -25,6 +25,7 @@ async-stream = "0.2"
 toml = "0.4"
 rand = "0.8.5"
 async-recursion = "1.0.0"
+num_cpus = "1.13.1"
 
 [build-dependencies]
 tonic-build = "0.8"

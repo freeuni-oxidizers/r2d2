@@ -65,9 +65,10 @@ pub enum Dependency {
 
 pub trait RddSerde {
     /// serialize data returned by this rdd in a form which can be sent over the network
-    fn serialize_raw_data(&self, raw_data: Box<dyn Any + Send>) -> Vec<u8>;
+    fn serialize_raw_data(&self, raw_data: &(dyn Any + Send)) -> Vec<u8>;
     /// deserialize data in a way which can be ingested into following rdds
     fn deserialize_raw_data(&self, serialized_data: Vec<u8>) -> Box<dyn Any + Send>;
+    fn clone_any(&self, raw_data: &(dyn Any + Send)) -> Box<dyn Any + Send>;
 }
 
 pub trait NarrowRddWork {
@@ -224,14 +225,19 @@ where
     T: TypedRdd,
 {
     // TODO: We don't need ownership.
-    fn serialize_raw_data(&self, raw_data: Box<dyn Any + Send>) -> Vec<u8> {
-        let data: Vec<T::Item> = *raw_data.downcast().unwrap();
-        serde_json::to_vec(&data).unwrap()
+    fn serialize_raw_data(&self, raw_data: &(dyn Any + Send)) -> Vec<u8> {
+        let data: &Vec<T::Item> = raw_data.downcast_ref::<Vec<T::Item>>().unwrap();
+        serde_json::to_vec(data).unwrap()
     }
 
     fn deserialize_raw_data(&self, serialized_data: Vec<u8>) -> Box<dyn Any + Send> {
         let data: Vec<T::Item> = serde_json::from_slice(&serialized_data).unwrap();
         Box::new(data)
+    }
+
+    fn clone_any(&self, raw_data: &(dyn Any + Send)) -> Box<dyn Any + Send> {
+        let data: &Vec<T::Item> = raw_data.downcast_ref::<Vec<T::Item>>().unwrap();
+        Box::new(data.clone())
     }
 }
 

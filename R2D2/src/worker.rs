@@ -8,10 +8,11 @@ use crate::worker::bucket_receiver::receiver_loop;
 use crate::Config;
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Semaphore};
 use tokio::time::{sleep, Duration};
 use tonic::transport::Channel;
 use tonic::Request;
@@ -187,6 +188,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                 .expect("Failed to start bucket receiver loop");
         });
     }
+    let semaphore = Arc::new(Semaphore::new(num_cpus::get()));
 
     // master may not be running yet
     println!("Worker #{id} starting");
@@ -194,6 +196,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
 
     // Here response.action must be TaskAction::Work
     loop {
+        let task_run_permit = semaphore.clone().acquire_owned().await.unwrap();
         let get_task_response = match master_conn
             .get_task(Request::new(GetTaskRequest { id: id as u32 }))
             .await
@@ -224,16 +227,15 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                             let mut executor = executor.clone();
                             thread::spawn(move || {
                                 executor.resolve(&graph, rdd_pid);
-
-                                let materialized_rdd_result = graph
-                                    .get_rdd(result_task.rdd_partition_id.rdd_id)
-                                    .unwrap()
-                                    .serialize_raw_data(
-                                        executor
-                                            .cache
-                                            .take_as_any(rdd_pid.rdd_id, rdd_pid.partition_id)
-                                            .unwrap(),
-                                    );
+                                let rdd =
+                                    graph.get_rdd(result_task.rdd_partition_id.rdd_id).unwrap();
+                                let materialized_rdd_result = rdd.serialize_raw_data(
+                                    &*executor
+                                        .cache
+                                        .take_as_any(rdd_pid.rdd_id, rdd_pid.partition_id, rdd)
+                                        .unwrap(),
+                                );
+                                drop(task_run_permit);
                                 materialized_tx.send(materialized_rdd_result).unwrap()
                             });
                         }
@@ -256,6 +258,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                             let mut executor = executor.clone();
                             thread::spawn(move || {
                                 let serialized_buckets = executor.resolve_task(&graph, &wide_task);
+                                drop(task_run_permit);
                                 buckets_tx.send(serialized_buckets).unwrap()
                             });
                         }

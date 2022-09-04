@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::core::{
-    dag_scheduler::dsu::{find_groups, GroupId},
+    dag_scheduler::dsu::{GroupId, PartitionDsu},
     task_scheduler::{ResultTask, Task},
 };
 
@@ -35,39 +35,39 @@ mod dsu {
     };
 
     #[derive(Default, Debug)]
-    struct PartitionDsu {
+    pub struct PartitionDsu {
         parent: HashMap<RddPartitionId, RddPartitionId>,
         visited: HashSet<RddPartitionId>,
+        ids: HashMap<RddPartitionId, usize>,
     }
 
     #[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Ord, Debug)]
     pub struct GroupId(usize);
 
-    pub fn find_groups(graph: &Graph, target_rdd: RddId) -> HashMap<RddPartitionId, GroupId> {
-        let mut dsu = PartitionDsu {
-            parent: HashMap::default(),
-            visited: Default::default(),
-        };
-        dsu.run(graph, target_rdd);
-        let mut cur_id = 0;
-        let mut ids: HashMap<_, _> = HashMap::default();
-        let mut res: HashMap<_, _> = HashMap::default();
-        for (rpid, _) in dsu.parent.clone().into_iter() {
-            let p = dsu.par(rpid);
-            let id = match ids.get(&p) {
-                Some(id) => *id,
-                None => {
-                    cur_id += 1;
-                    ids.insert(p, cur_id);
-                    cur_id
-                }
-            };
-            res.insert(rpid, GroupId(id));
-        }
-        res
-    }
-
     impl PartitionDsu {
+        pub fn consume_new_graph(
+            &mut self,
+            graph: &Graph,
+            target_rdd: RddId,
+        ) -> HashMap<RddPartitionId, GroupId> {
+            self.run(graph, target_rdd);
+            let mut cur_id = 0;
+            let mut res: HashMap<_, _> = HashMap::default();
+            for (rpid, _) in self.parent.clone().into_iter() {
+                let p = self.par(rpid);
+                let id = match self.ids.get(&p) {
+                    Some(id) => *id,
+                    None => {
+                        cur_id += 1;
+                        self.ids.insert(p, cur_id);
+                        cur_id
+                    }
+                };
+                res.insert(rpid, GroupId(id));
+            }
+            res
+        }
+
         fn par(&mut self, x: RddPartitionId) -> RddPartitionId {
             let p = match self.parent.get(&x) {
                 Some(p) => {
@@ -271,7 +271,6 @@ impl DagScheduler {
             self.waiting_tasks.contains(&task_id) || self.running_tasks.contains(&task_id);
         if !already_submitted {
             let todo_deps = self.get_missing_deps(&task_id);
-            dbg!(&todo_deps);
             if todo_deps.is_empty() {
                 // All dependecies are ready, commence task execution!
                 let mut task = self.tasks.get(&task_id).unwrap().clone();
@@ -296,7 +295,7 @@ impl DagScheduler {
 
     /// stores taska and creates parent->child child->parent links
     fn store_task(&mut self, task_id: TaskId, task: Task, wide_dependecies: Vec<RddPartitionId>) {
-        println!("[+] task: {task:?} deps: {wide_dependecies:?}");
+        println!("[+] task created: {task:?} deps: {wide_dependecies:?}");
         self.tasks.insert(task_id, task);
         wide_dependecies.iter().for_each(|rpid| {
             self.childs
@@ -392,21 +391,23 @@ impl DagScheduler {
             self.cached.insert(e.wide_partition, true);
             for task_id in self.childs.get(&e.wide_partition).unwrap().clone() {
                 // try to schedule this task if all the deps have freed up
-                self.waiting_tasks.remove(&task_id);
-                self.try_submit_task(task_id).await;
+                if self.waiting_tasks.contains(&task_id) {
+                    self.waiting_tasks.remove(&task_id);
+                    self.try_submit_task(task_id).await;
+                }
             }
         }
     }
 
     pub async fn start(mut self) {
         println!("Dag scheduler is running!");
+        let mut dsu = PartitionDsu::default();
         while let Some(job) = self.job_receiver.recv().await {
             println!("[+] new job received target_rdd_id={:?}", job.target_rdd_id);
 
             let target_rdd = job.graph.get_rdd(job.target_rdd_id).expect("rdd not found");
 
-            let groups = find_groups(&job.graph, job.target_rdd_id);
-            dbg!(&groups);
+            let groups = dsu.consume_new_graph(&job.graph, job.target_rdd_id);
             println!("[+] dsu done");
             self.groups = groups;
             self.create_stage_tasks(&job.graph, job.target_rdd_id);
@@ -451,7 +452,7 @@ impl DagScheduler {
                                 println!("all workers received graphs");
                                 break;
                             }
-                        },
+                        }
                         WorkerEvent::Fail(_) => panic!("Task somehow failed?"),
                         _ => panic!("wrong event"),
                     }
@@ -487,6 +488,9 @@ impl DagScheduler {
                                 job.materialized_data_channel
                                     .send(final_results)
                                     .expect("can't returned materialied result to spark");
+                                self.childs.clear();
+                                self.running_tasks.clear();
+                                assert!(self.waiting_tasks.is_empty());
                                 break;
                             }
                         } else {

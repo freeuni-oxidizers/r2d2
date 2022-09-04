@@ -54,10 +54,13 @@ impl Executor {
             RddWorkFns::Narrow(narrow_work) => {
                 let rdd = graph.get_rdd(id.rdd_id).unwrap();
                 let res = match rdd.rdd_dependency() {
-                    Dependency::Narrow(prev_rdd) => narrow_work.work(
-                        self.cache.take_as_any(prev_rdd, id.partition_id),
-                        id.partition_id,
-                    ),
+                    Dependency::Narrow(prev_rdd_id) => {
+                        let prev_rdd = graph.get_rdd(prev_rdd_id).unwrap();
+                        narrow_work.work(
+                            self.cache.take_as_any(prev_rdd_id, id.partition_id, prev_rdd),
+                            id.partition_id,
+                        )
+                    }
                     Dependency::No => narrow_work.work(None, id.partition_id),
                     Dependency::Wide(_) => unreachable!(),
                 };
@@ -80,6 +83,8 @@ impl Executor {
 
                     let wides_result = aggr_fns.aggregate_buckets(buckets);
                     self.cache.put(id, wides_result);
+                    // we keep stage results
+                    self.cache.keep_when_taken(id);
                 };
             }
         };
@@ -102,16 +107,17 @@ impl Executor {
             // perform bucketisation of final data
             let rdd = graph.get_rdd(task.wide_rdd_id).unwrap();
             if let RddWorkFns::Wide(work) = rdd.work_fns() {
+                let dep_rdd = graph.get_rdd(dep_id).unwrap();
                 let buckets = work.partition_data(
                     self.cache
-                        .take_as_any(dep_id, task.narrow_partition_id)
+                        .take_as_any(dep_id, task.narrow_partition_id, dep_rdd)
                         .unwrap(),
                 );
 
                 let aggred_buckets: Vec<_> = buckets
                     .into_iter()
                     .map(|bucket| work.aggregate_inside_bucket(bucket))
-                    .map(|aggred_bucket| rdd.serialize_raw_data(aggred_bucket))
+                    .map(|aggred_bucket| rdd.serialize_raw_data(&*aggred_bucket))
                     .collect();
 
                 return aggred_buckets;
