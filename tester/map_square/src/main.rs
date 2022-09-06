@@ -22,16 +22,16 @@ async fn main() {
     // let rdd = spark.filter(rdd, |x| x % 2 == 0);
     // let rdd = spark.flat_map(rdd, |x| x);
     // let rdd = spark.map(rdd, |x| (x, 1));
-    let mut input = [0; 100];
-    for i in 0..100 {
-        input[i] = rand::thread_rng().gen();
-    }
-    dbg!(input);
+    // let mut input = [0; 100];
+    // for i in 0..100 {
+    //     input[i] = rand::thread_rng().gen();
+    // }
+    // dbg!(input);
 
-    let data = vec![input.to_vec()];
+    // let data = vec![input.to_vec()];
 
-    let rdd = spark.new_from_list(data);
-    let rdd = spark.sort(rdd, 10).await;
+    // let rdd = spark.new_from_list(data);
+    // let rdd = spark.sort(rdd, 10).await;
     // let rdd = spark.map_partitions(rdd, |partition, partition_id| {
     //     let file_name = format!("out_{partition_id}");
     //     let file_data = format!("{:?}", partition);
@@ -42,14 +42,14 @@ async fn main() {
     // let sorted = spark.collect(rdd).await;
     // input.sort();
     // assert_eq!(sorted, input);
-
-    spark
-        .save(
-            rdd,
-            |partition| format!("{:?}", partition).into_bytes(),
-            PathBuf::from("spark_job_output"),
-        )
-        .await;
+    
+//    spark
+//        .save(
+//            rdd,
+//            |partition| format!("{:?}", partition).into_bytes(),
+//            PathBuf::from("spark_job_output"),
+//        )
+//        .await;
 
     // Rdd<(path, data)>
     // let result = spark.collect(rdd).await;

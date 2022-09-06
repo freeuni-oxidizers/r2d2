@@ -268,13 +268,12 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                             let master_conn = master_conn.clone();
                             tokio::spawn(async move {
                                 let serialized_buckets = buckets_rx.await.unwrap();
-                                let target_addrs: Vec<_> = wide_task
+                                let target_addrs = wide_task
                                     .target_workers
                                     .into_iter()
                                     .map(|worker_id| {
                                         (worker_id, config.worker_addrs[worker_id].clone())
-                                    })
-                                    .collect();
+                                    });
 
                                 let bucket_worker_pair =
                                     target_addrs.into_iter().zip(serialized_buckets.into_iter());

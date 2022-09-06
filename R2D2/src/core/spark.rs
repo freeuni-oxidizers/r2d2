@@ -27,7 +27,6 @@ use super::{
     },
     task_scheduler::{DagMessage, TaskScheduler, WorkerEvent, WorkerMessage},
 };
-use std::fs;
 
 // TODO(zvikinoza): extract this to sep file
 // and use SparkContext as lib from rdd-simple
@@ -140,12 +139,19 @@ impl Spark {
         self.collect(rdd).await;
     }
 
-    pub async fn read_partitions_from<T>(
+    pub async fn read_partitions_from(
         &mut self,
         path: PathBuf,
         num_partitions: usize,
     ) -> RddIndex<(PathBuf, Vec<u8>)> {
-        unimplemented!()
+        let data: Vec<Vec<PathBuf>> = (0..num_partitions).map(|i| {
+            vec![path.join(i.to_string())]
+        }).collect();
+        let rdd = self.new_from_list(data);
+        self.map(rdd, |path| {
+            let data = std::fs::read(&path).expect("Error: while reading partition file");
+            (path, data) 
+        })
     }
 
     pub async fn sort<T>(&mut self, rdd: RddIndex<T>, num_partitions: usize) -> RddIndex<T>
