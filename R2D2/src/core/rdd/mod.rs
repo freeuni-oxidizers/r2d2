@@ -60,7 +60,36 @@ impl<T> Data for T where T: Serialize + DeserializeOwned + Clone + Send + Sync +
 pub enum Dependency {
     Narrow(RddId),
     Wide(RddId),
+    Union(UnionDependency),
     No,
+}
+
+struct UnionDependency {
+    // (rdd, start_partition)
+    deps: Vec<(RddId, usize)>,
+}
+// [0, 3, 5]
+// -> 4
+// -> 1
+// -> 3
+impl UnionDependency {
+    fn new(deps: &[(RddId, usize)]) -> Self {
+        let result = Vec::new();
+        let cur_start = 0;
+        for dep_rdd in deps {
+            result.push((dep_rdd.0, cur_start));
+            let partition_num = dep_rdd.1;
+            cur_start += partition_num;
+        }
+    }
+    fn get_partition_depp(&self, partition_id: usize) -> RddPartitionId {
+        let dep_idx = self.deps.partition_point(|&x| x.1 < partition_id) - 1;
+        let dep_rdd = self.deps[dep_idx];
+        RddPartitionId {
+            rdd_id: dep_rdd.0,
+            partition_id: partition_id - dep_rdd.1,
+        }
+    }
 }
 
 pub trait RddSerde {
