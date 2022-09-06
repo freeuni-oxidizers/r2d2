@@ -63,6 +63,7 @@ impl Executor {
                     }
                     Dependency::No => narrow_work.work(None, id.partition_id),
                     Dependency::Wide(_) => unreachable!(),
+                    Dependency::Union(_) => unreachable!(),
                 };
                 self.cache.put(id, res);
             }
@@ -87,6 +88,14 @@ impl Executor {
                     self.cache.keep_when_taken(id);
                 };
             }
+            RddWorkFns::Union => {
+                if let Dependency::Union(union_deps) = graph.get_rdd(id.rdd_id).unwrap().rdd_dependency() {
+                    let dep_partition = union_deps.get_partition_depp(id.partition_id);
+                    self.resolve(graph, dep_partition);
+                    let data = self.cache.take_as_any(dep_partition.rdd_id, dep_partition.partition_id, graph.get_rdd(dep_partition.rdd_id).unwrap()).unwrap();
+                    self.cache.put(id, data); 
+                }
+            },
         };
     }
 

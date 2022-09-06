@@ -3,6 +3,7 @@ use std::{fmt::Debug, ops::Add, path::PathBuf, process::exit};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{core::rdd::shuffle_rdd::Aggregator, master::MasterService, worker, Args, Config};
+use crate::core::rdd::union_rdd::UnionRdd;
 
 use self::{
     file_writer::FileWriter,
@@ -178,9 +179,8 @@ impl Spark {
 
 mod file_writer {
     use crate::core::rdd::{map_partitions::PartitionMapper, Data};
-    use rand::{seq::IteratorRandom, thread_rng};
     use serde::{Deserialize, Serialize};
-    use std::{marker::PhantomData, path::PathBuf};
+    use std::path::PathBuf;
 
     #[derive(Serialize, Deserialize, Clone)]
     pub struct FileWriter<T: Data> {
@@ -490,6 +490,74 @@ impl Context for Spark {
             data,
         });
         idx
+    }
+
+    fn union<T: Data>(&mut self, deps: &[RddIndex<T>]) -> RddIndex<T> {
+        let idx = RddIndex::new(RddId::new());
+        let deps: Vec<(RddId,usize)> = deps.iter().map(|rdd_idx| (rdd_idx.id, self.graph.get_rdd(rdd_idx.id).unwrap().partitions_num())).collect();
+        let partitions_num = deps.iter().map(|(_, np)| np).sum::<usize>();
+        self.graph.store_new_rdd(UnionRdd {
+            idx, 
+            deps,
+            partitions_num,
+        });
+        idx
+    }
+
+    fn cogroup<K, V, W, P>(&mut self, left: RddIndex<(K, V)>, right: RddIndex<(K, W)>, partitioner: P) -> RddIndex<(K, (Vec<V>, Vec<W>))> 
+    where 
+        K: Data + Eq + std::hash::Hash,
+        V: Data, 
+        W: Data, 
+        P: Partitioner<Key = K>,
+    {
+        // TODO: don't map w fn ptr
+        
+        #[derive(Clone, serde::Serialize, serde::Deserialize)]
+        enum VW<V, W> {
+            Left(V),
+            Right(W),
+        }
+        let left = self.map(left, |(k, v)| (k, VW::Left(v)));
+        let right = self.map(right, |(k, w)| (k, VW::Right(w)));
+        let all = self.union(&[left, right]);
+        let grouped = self.group_by(all, partitioner);
+        self.map(grouped, |(k, values)| {
+            let (mut left, mut right) = (Vec::new(), Vec::new());
+            for vw in values {
+                match vw {
+                    VW::Left(v) => left.push(v),
+                    VW::Right(w) => right.push(w),
+                }
+            }
+            (k, (left, right))
+        })
+    }
+
+    fn join<K, V, W, P>(&mut self, left: RddIndex<(K, V)>, right: RddIndex<(K, W)>, partitioner: P) -> RddIndex<(K, (V, W))> 
+    where
+        K: Data + Eq + std::hash::Hash,
+        V: Data,
+        W: Data,
+        P: Partitioner<Key = K>,
+    {
+        //let left = self.group_by(left, partitioner);
+        //let right = self.group_by(right, partitioner);
+        let all = self.cogroup(left, right, partitioner);
+        self.flat_map(all, |(k, (vec_v, vec_w))| {
+            let mut res = Vec::new();
+            for v in vec_v {
+                for w in vec_w.clone() {
+                    res.push((k.clone(), (v.clone(), w)));
+                }
+            }
+            res
+            // vec_v.into_iter().flat_map(|v| {
+            //     vec_w.clone().into_iter().map(|w| {
+            //         (k.clone(), (v.clone(), w))
+            //     }).collect::<Vec<_>>()
+            // }).collect::<Vec<_>>()
+        })
     }
 }
 
