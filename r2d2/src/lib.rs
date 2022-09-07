@@ -1,4 +1,4 @@
-#[allow(clippy::type_complexity)]
+#![allow(clippy::type_complexity)]
 
 use serde::Deserialize;
 

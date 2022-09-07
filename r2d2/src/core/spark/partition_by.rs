@@ -55,11 +55,9 @@ pub struct FinishingFlatten<T> {
     _value: PhantomData<T>,
 }
 
-impl<T> FinishingFlatten<T> {
-    pub fn new() -> Self {
-        Self {
-            _value: PhantomData,
-        }
+impl<T> Default for FinishingFlatten<T> {
+    fn default() -> Self {
+        Self { _value: PhantomData::default() }
     }
 }
 

@@ -11,6 +11,8 @@ use self::{
     partition_by::{DummyPartitioner, FinishingFlatten, MapUsingPartitioner},
     sample_partitioner::SamplePartitioner,
     sum_by_key::SumByKeyAggregator,
+    cartesian::Cartesian,
+    cogroup::{Unzip, Lefter, Righter},
 };
 
 use super::{
@@ -213,7 +215,7 @@ impl Context for Spark {
     {
         let rdd = self.map_with_state(rdd, MapUsingPartitioner::new(partitioner.clone()));
         let rdd = self.group_by(rdd, DummyPartitioner(partitioner.partitions_num()));
-        self.flat_map_with_state(rdd, FinishingFlatten::new())
+        self.flat_map_with_state(rdd, FinishingFlatten::default())
     }
 
     // (K, Add) -> (K, Add)
@@ -376,27 +378,11 @@ impl Context for Spark {
         W: Data,
         P: Partitioner<Key = K>,
     {
-        // TODO: don't map w fn ptr
-
-        #[derive(Clone, serde::Serialize, serde::Deserialize)]
-        enum VW<V, W> {
-            Left(V),
-            Right(W),
-        }
-        let left = self.map(left, |(k, v)| (k, VW::Left(v)));
-        let right = self.map(right, |(k, w)| (k, VW::Right(w)));
+        let left = self.map_with_state(left, Lefter::default());
+        let right = self.map_with_state(right, Righter::default());
         let all = self.union(&[left, right]);
         let grouped = self.group_by(all, partitioner);
-        self.map(grouped, |(k, values)| {
-            let (mut left, mut right) = (Vec::new(), Vec::new());
-            for vw in values {
-                match vw {
-                    VW::Left(v) => left.push(v),
-                    VW::Right(w) => right.push(w),
-                }
-            }
-            (k, (left, right))
-        })
+        self.map_with_state(grouped, Unzip::default())
     }
 
     fn join<K, V, W, P>(
@@ -411,23 +397,8 @@ impl Context for Spark {
         W: Data,
         P: Partitioner<Key = K>,
     {
-        //let left = self.group_by(left, partitioner);
-        //let right = self.group_by(right, partitioner);
         let all = self.cogroup(left, right, partitioner);
-        self.flat_map(all, |(k, (vec_v, vec_w))| {
-            let mut res = Vec::new();
-            for v in vec_v {
-                for w in vec_w.clone() {
-                    res.push((k.clone(), (v.clone(), w)));
-                }
-            }
-            res
-            // vec_v.into_iter().flat_map(|v| {
-            //     vec_w.clone().into_iter().map(|w| {
-            //         (k.clone(), (v.clone(), w))
-            //     }).collect::<Vec<_>>()
-            // }).collect::<Vec<_>>()
-        })
+        self.flat_map_with_state(all, Cartesian::default())
     }
 }
 
@@ -444,3 +415,7 @@ pub mod group_by;
 pub mod file_writer;
 
 pub mod sum_by_key;
+
+pub mod cartesian;
+
+pub mod cogroup;
