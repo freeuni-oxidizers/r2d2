@@ -4,7 +4,6 @@ members = [
 	"r2d2",
 	"tester",
 	"serde-fp",
-	"tester/map_square",
 ]
 
 [profile.release]
