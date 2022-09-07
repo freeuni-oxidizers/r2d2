@@ -299,8 +299,6 @@ pub mod shuffle_rdd;
 
 pub mod map_partitions;
 
-pub mod sample_rdd;
-
 pub mod union_rdd;
 // crate::core::rdd::RddBase;
 // crate::core::rdd::map_rdd::MapRdd;
