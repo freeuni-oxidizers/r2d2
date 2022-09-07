@@ -7,7 +7,6 @@ use crate::r2d2::{GetTaskRequest, TaskResultRequest};
 use crate::worker::bucket_receiver::receiver_loop;
 use crate::Config;
 use std::error::Error;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use tokio::io::AsyncWriteExt;
@@ -51,7 +50,6 @@ pub(crate) mod bucket_receiver {
     use core::fmt;
     use std::{
         collections::HashMap,
-        path::{Path, PathBuf},
         sync::Arc,
     };
 
@@ -74,8 +72,8 @@ pub(crate) mod bucket_receiver {
     #[derive(Debug)]
     #[allow(dead_code)]
     pub(crate) enum Error {
-        FsError,
-        NetworkError,
+        Fs,
+        Network,
         AlreadyExists,
     }
 
@@ -84,8 +82,8 @@ pub(crate) mod bucket_receiver {
     impl fmt::Display for Error {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
-                Error::FsError => write!(f, "FS error when creating bucket file"),
-                Error::NetworkError => write!(f, "Error when receiving bucket from socket"),
+                Error::Fs => write!(f, "FS error when creating bucket file"),
+                Error::Network => write!(f, "Error when receiving bucket from socket"),
                 Error::AlreadyExists => write!(
                     f,
                     "Couldn't create new bucket file. Probably already exists"
@@ -106,18 +104,17 @@ pub(crate) mod bucket_receiver {
     async fn receive_bucket_from_socket(
         _worker_id: usize,
         mut socket: TcpStream,
-        _root_dir: &Path,
         received_buckets: Arc<std::sync::Mutex<HashMap<(RddPartitionId, usize), Vec<u8>>>>,
     ) -> Result<(RddPartitionId, usize), Error> {
-        let wide_rdd_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
-        let wide_partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
-        let narrow_partition_id = socket.read_u32().await.map_err(|_| Error::NetworkError)?;
-        let data_len = socket.read_u64().await.map_err(|_| Error::NetworkError)?;
+        let wide_rdd_id = socket.read_u32().await.map_err(|_| Error::Network)?;
+        let wide_partition_id = socket.read_u32().await.map_err(|_| Error::Network)?;
+        let narrow_partition_id = socket.read_u32().await.map_err(|_| Error::Network)?;
+        let data_len = socket.read_u64().await.map_err(|_| Error::Network)?;
         let mut buf = vec![0_u8; data_len as usize];
         socket
             .read_exact(&mut buf[..])
             .await
-            .map_err(|_| Error::NetworkError)?;
+            .map_err(|_| Error::Network)?;
         let mut buckets = { received_buckets.lock().unwrap() };
         let rpid = RddPartitionId {
             rdd_id: RddId(wide_rdd_id as usize),
@@ -130,22 +127,18 @@ pub(crate) mod bucket_receiver {
     pub(crate) async fn receiver_loop(
         worker_id: usize,
         port: usize,
-        fs_root: PathBuf,
         master_client: MasterClient<Channel>,
         received_buckets: Arc<std::sync::Mutex<HashMap<(RddPartitionId, usize), Vec<u8>>>>,
     ) -> Result<(), Error> {
         let addr = format!("0.0.0.0:{port}");
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(|_| Error::NetworkError)?;
+        let listener = TcpListener::bind(addr).await.map_err(|_| Error::Network)?;
         loop {
             if let Ok((socket, _)) = listener.accept().await {
-                let fs_root = fs_root.clone();
                 let mut master_client = master_client.clone();
                 let buckets = received_buckets.clone();
                 tokio::spawn(async move {
                     // TODO: ping master about received bucket
-                    match receive_bucket_from_socket(worker_id, socket, &fs_root, buckets).await {
+                    match receive_bucket_from_socket(worker_id, socket, buckets).await {
                         Ok((rpid, narrow_partition_id)) => {
                             let worker_event = WorkerEvent::BucketReceived(BucketReceivedEvent {
                                 worker_id,
@@ -155,10 +148,12 @@ pub(crate) mod bucket_receiver {
                             send_worker_event(&mut master_client, worker_event).await;
                         }
                         Err(e) => match e {
-                            Error::FsError => {
+                            Error::Fs => {
                                 panic!("File system error occured when receiving bucket")
                             }
-                            _ => {}
+                            _ => {
+                                println!("ignoring error: {e:?}")
+                            }
                         },
                     };
                 });
@@ -167,7 +162,7 @@ pub(crate) mod bucket_receiver {
     }
 }
 
-pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf, config: Config) {
+pub async fn start(id: usize, port: usize, master_addr: String, config: Config) {
     // let cache: Cache = Arc::new(Mutex::new(HashMap::new()));
     // let cachecp = cache.clone();
 
@@ -183,7 +178,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
         let master_conn = master_conn.clone();
 
         tokio::spawn(async move {
-            receiver_loop(id, port, fs_root, master_conn, cache)
+            receiver_loop(id, port, master_conn, cache)
                 .await
                 .expect("Failed to start bucket receiver loop");
         });
@@ -268,10 +263,8 @@ pub async fn start(id: usize, port: usize, master_addr: String, fs_root: PathBuf
                             let master_conn = master_conn.clone();
                             tokio::spawn(async move {
                                 let serialized_buckets = buckets_rx.await.unwrap();
-                                let target_addrs = wide_task
-                                    .target_workers
-                                    .into_iter()
-                                    .map(|worker_id| {
+                                let target_addrs =
+                                    wide_task.target_workers.into_iter().map(|worker_id| {
                                         (worker_id, config.worker_addrs[worker_id].clone())
                                     });
 

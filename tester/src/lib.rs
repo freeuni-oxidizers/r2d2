@@ -3,7 +3,7 @@ mod tests {
     // #[test]
     #[allow(dead_code)]
     fn single_worker() {
-        tokio_test::block_on(R2D2::runner::run(&R2D2::runner::Config {
+        tokio_test::block_on(r2d2::runner::run(&r2d2::runner::Config {
             code_path: "single_worker",
             input_path: "single_worker/input",
             output_path: "single_worker/output",
@@ -20,13 +20,13 @@ mod tests {
     // #[test]
     #[allow(dead_code)]
     fn multiple_workers() {
-        let cfg = &R2D2::runner::Config {
+        let cfg = &r2d2::runner::Config {
             code_path: "multiple_workers",
             input_path: "multiple_workers/input",
             output_path: "multiple_workers/output",
             n_workers: 10,
         };
-        tokio_test::block_on(R2D2::runner::run(cfg));
+        tokio_test::block_on(r2d2::runner::run(cfg));
         let ex_fname = "multiple_workers/expected";
         let expected = std::fs::read_to_string(ex_fname).unwrap();
         for id in 0..cfg.n_workers {
@@ -40,13 +40,13 @@ mod tests {
 
     #[test]
     fn map_square() {
-        let cfg = &R2D2::runner::Config {
+        let cfg = &r2d2::runner::Config {
             code_path: "map_square",
             input_path: "map_square/input",
             output_path: "map_square/output",
             n_workers: 1,
         };
-        tokio_test::block_on(R2D2::runner::run(cfg));
+        tokio_test::block_on(r2d2::runner::run(cfg));
 
         let ex_fname = "map_square/expected";
         let out_fname = "map_square/output";

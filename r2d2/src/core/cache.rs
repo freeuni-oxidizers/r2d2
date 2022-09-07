@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::rdd::{Data, RddId, RddIndex, RddPartitionId, RddBase};
+use super::rdd::{Data, RddBase, RddId, RddIndex, RddPartitionId};
 
 #[derive(Default, Debug)]
 pub struct CacheInner {
@@ -39,11 +39,7 @@ impl ResultCache {
     //         .map(|b| b.downcast_ref::<Vec<T>>().unwrap().as_slice())
     // }
 
-    pub fn take_as<T: Data>(
-        &self,
-        rdd: RddIndex<T>,
-        partition_id: usize,
-    ) -> Option<Vec<T>> {
+    pub fn take_as<T: Data>(&self, rdd: RddIndex<T>, partition_id: usize) -> Option<Vec<T>> {
         let mut inner = self.inner.lock().unwrap();
         let rpid = RddPartitionId {
             rdd_id: rdd.id,
@@ -51,7 +47,9 @@ impl ResultCache {
         };
         let cache = inner.should_keep.contains(&rpid);
         if cache {
-            inner.data.get(&rpid)
+            inner
+                .data
+                .get(&rpid)
                 .map(|b| b.downcast_ref::<Vec<T>>().unwrap().clone())
         } else {
             inner.data.remove(&rpid).map(|b| *b.downcast().unwrap())
@@ -80,7 +78,7 @@ impl ResultCache {
         };
         let cache = inner.should_keep.contains(&rpid);
         if cache {
-            inner.data.get(&rpid).map(|v|rdd.clone_any(v.as_ref()))
+            inner.data.get(&rpid).map(|v| rdd.clone_any(v.as_ref()))
         } else {
             inner.data.remove(&rpid)
         }

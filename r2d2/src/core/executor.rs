@@ -57,7 +57,8 @@ impl Executor {
                     Dependency::Narrow(prev_rdd_id) => {
                         let prev_rdd = graph.get_rdd(prev_rdd_id).unwrap();
                         narrow_work.work(
-                            self.cache.take_as_any(prev_rdd_id, id.partition_id, prev_rdd),
+                            self.cache
+                                .take_as_any(prev_rdd_id, id.partition_id, prev_rdd),
                             id.partition_id,
                         )
                     }
@@ -89,13 +90,22 @@ impl Executor {
                 };
             }
             RddWorkFns::Union => {
-                if let Dependency::Union(union_deps) = graph.get_rdd(id.rdd_id).unwrap().rdd_dependency() {
+                if let Dependency::Union(union_deps) =
+                    graph.get_rdd(id.rdd_id).unwrap().rdd_dependency()
+                {
                     let dep_partition = union_deps.get_partition_depp(id.partition_id);
                     self.resolve(graph, dep_partition);
-                    let data = self.cache.take_as_any(dep_partition.rdd_id, dep_partition.partition_id, graph.get_rdd(dep_partition.rdd_id).unwrap()).unwrap();
-                    self.cache.put(id, data); 
+                    let data = self
+                        .cache
+                        .take_as_any(
+                            dep_partition.rdd_id,
+                            dep_partition.partition_id,
+                            graph.get_rdd(dep_partition.rdd_id).unwrap(),
+                        )
+                        .unwrap();
+                    self.cache.put(id, data);
                 }
-            },
+            }
         };
     }
 

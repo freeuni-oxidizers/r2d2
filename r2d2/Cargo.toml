@@ -1,12 +1,12 @@
 [package]
-name = "R2D2"
+name = "r2d2"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "R2D2"
+name = "r2d2"
 path = "src/lib.rs"
 
 [dependencies]
@@ -29,4 +29,15 @@ num_cpus = "1.13.1"
 
 [build-dependencies]
 tonic-build = "0.8"
+
+
+[[example]]
+name = "join"
+path = "examples/join.rs"
+
+
+[[example]]
+name = "sum_by_key"
+path = "examples/sum_by_key.rs"
+
 

@@ -1,10 +1,11 @@
 use std::{hash::Hash, ops::Add};
 
 use super::rdd::{
-    map_rdd::Mapper,
+    flat_map_rdd::FlatMapper,
     map_partitions::PartitionMapper,
+    map_rdd::Mapper,
     shuffle_rdd::{Aggregator, Partitioner},
-    Data, RddIndex, flat_map_rdd::FlatMapper,
+    Data, RddIndex,
 };
 
 /// All these methods use interior mutability to keep state
@@ -27,21 +28,31 @@ pub trait Context {
     where
         K: Eq + Hash,
         P: Partitioner<Key = K>;
-    
-    fn sample<T>(&mut self, rdd: RddIndex<T>, amount: usize) -> RddIndex<T> 
-    where 
+
+    fn sample<T>(&mut self, rdd: RddIndex<T>, amount: usize) -> RddIndex<T>
+    where
         T: Data;
 
     fn union<T: Data>(&mut self, deps: &[RddIndex<T>]) -> RddIndex<T>;
-    
-    fn cogroup<K, V, W, P>(&mut self, left: RddIndex<(K, V)>, right: RddIndex<(K, W)>, partitioner: P) -> RddIndex<(K, (Vec<V>, Vec<W>))> 
-    where 
+
+    fn cogroup<K, V, W, P>(
+        &mut self,
+        left: RddIndex<(K, V)>,
+        right: RddIndex<(K, W)>,
+        partitioner: P,
+    ) -> RddIndex<(K, (Vec<V>, Vec<W>))>
+    where
         K: Data + Eq + std::hash::Hash,
-        V: Data, 
-        W: Data, 
+        V: Data,
+        W: Data,
         P: Partitioner<Key = K>;
 
-    fn join<K, V, W, P>(&mut self, left: RddIndex<(K, V)>, right: RddIndex<(K, W)>, partitioner: P) -> RddIndex<(K, (V, W))> 
+    fn join<K, V, W, P>(
+        &mut self,
+        left: RddIndex<(K, V)>,
+        right: RddIndex<(K, W)>,
+        partitioner: P,
+    ) -> RddIndex<(K, (V, W))>
     where
         K: Data + Eq + std::hash::Hash,
         V: Data,
@@ -70,9 +81,17 @@ pub trait Context {
         mapper: M,
     ) -> RddIndex<U>;
 
-    fn map_partitions<T: Data, U: Data>(&mut self, rdd: RddIndex<T>, f: fn(Vec<T>, usize) -> Vec<U>) -> RddIndex<U>;
+    fn map_partitions<T: Data, U: Data>(
+        &mut self,
+        rdd: RddIndex<T>,
+        f: fn(Vec<T>, usize) -> Vec<U>,
+    ) -> RddIndex<U>;
 
-    fn map_partitions_with_state<T: Data, U: Data, M: PartitionMapper<In=T, Out=U>>(&mut self, rdd: RddIndex<T>, map_partitioner: M) -> RddIndex<U>;
+    fn map_partitions_with_state<T: Data, U: Data, M: PartitionMapper<In = T, Out = U>>(
+        &mut self,
+        rdd: RddIndex<T>,
+        map_partitioner: M,
+    ) -> RddIndex<U>;
 
     fn flat_map<T: Data, U: Data, I: IntoIterator<Item = U> + Data>(
         &mut self,
@@ -80,7 +99,12 @@ pub trait Context {
         f: fn(T) -> I,
     ) -> RddIndex<U>;
 
-    fn flat_map_with_state<T: Data, U: Data, I: IntoIterator<Item = U>, F: FlatMapper<In=T, OutIterable = I>>(
+    fn flat_map_with_state<
+        T: Data,
+        U: Data,
+        I: IntoIterator<Item = U>,
+        F: FlatMapper<In = T, OutIterable = I>,
+    >(
         &mut self,
         rdd: RddIndex<T>,
         flat_mapper: F,

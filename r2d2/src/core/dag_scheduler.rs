@@ -122,12 +122,12 @@ mod dsu {
                         );
                     }
                 }
-                crate::core::rdd::Dependency::No => {},
+                crate::core::rdd::Dependency::No => {}
                 crate::core::rdd::Dependency::Union(ud) => {
                     let parent_rpid = ud.get_partition_depp(rpid.partition_id);
                     self.join(rpid, parent_rpid);
                     self.dfs(graph, parent_rpid)
-                 }
+                }
             }
         }
 
@@ -305,7 +305,7 @@ impl DagScheduler {
         wide_dependecies.iter().for_each(|rpid| {
             self.childs
                 .entry(*rpid)
-                .or_insert_with(|| Vec::new())
+                .or_insert_with(Vec::new)
                 .push(task_id)
         });
         self.task_deps.insert(task_id, wide_dependecies);
@@ -332,7 +332,7 @@ impl DagScheduler {
                         worker_id: 0,
                         kind: TaskKind::WideTask(wide_task),
                     };
-                    let task_wide_dependecies = self.get_direct_dependencies(
+                    let task_wide_dependecies = Self::get_direct_dependencies(
                         graph,
                         RddPartitionId {
                             rdd_id: dep_rdd_id,
@@ -353,22 +353,23 @@ impl DagScheduler {
                 }
                 self.stage_tasks.insert(rdd_id, stage_tasks);
             }
-            Dependency::No => {},
+            Dependency::No => {}
             Dependency::Union(ud) => {
-                ud.deps.iter().for_each(|(dep_rid, _)| self.create_stage_tasks(graph, *dep_rid));
+                ud.deps
+                    .iter()
+                    .for_each(|(dep_rid, _)| self.create_stage_tasks(graph, *dep_rid));
             }
         }
     }
 
     // Returns direct wide partition dependecies
     fn get_direct_dependencies(
-        &mut self,
         graph: &Graph,
         node: RddPartitionId,
     ) -> Vec<RddPartitionId> {
         let rdd = graph.get_rdd(node.rdd_id).unwrap();
         match rdd.rdd_dependency() {
-            Dependency::Narrow(dep_rdd_id) => self.get_direct_dependencies(
+            Dependency::Narrow(dep_rdd_id) => Self::get_direct_dependencies(
                 graph,
                 RddPartitionId {
                     rdd_id: dep_rdd_id,
@@ -379,11 +380,9 @@ impl DagScheduler {
                 vec![node]
             }
             Dependency::No => Vec::new(),
-            Dependency::Union(ud) => 
-                self.get_direct_dependencies(
-                    graph,
-                    ud.get_partition_depp(node.partition_id)
-                )
+            Dependency::Union(ud) => {
+                Self::get_direct_dependencies(graph, ud.get_partition_depp(node.partition_id))
+            }
         }
     }
 
@@ -392,7 +391,7 @@ impl DagScheduler {
         let received_bucket_set = self
             .bucket_aggr_ids
             .entry(e.wide_partition)
-            .or_insert_with(|| HashSet::default());
+            .or_insert_with(HashSet::default);
         if received_bucket_set.contains(&e.narrow_partition_id) {
             println!("Received duplicate bucket id: {:?}", e);
             return;
@@ -441,7 +440,7 @@ impl DagScheduler {
                     worker_id: 0,
                     kind: TaskKind::ResultTask(result_task),
                 };
-                let deps = self.get_direct_dependencies(&job.graph, rpid);
+                let deps = Self::get_direct_dependencies(&job.graph, rpid);
                 self.store_task(task_id, task, deps);
                 result_stage_tasks.push(task_id);
             }

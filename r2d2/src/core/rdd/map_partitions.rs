@@ -59,7 +59,8 @@ where
         input_partition: Option<Vec<Self::InputItem>>,
         partition_id: usize,
     ) -> Vec<Self::OutputItem> {
-        self.map_partitioner.map_partitions(input_partition.unwrap(), partition_id)
+        self.map_partitioner
+            .map_partitions(input_partition.unwrap(), partition_id)
     }
 }
 

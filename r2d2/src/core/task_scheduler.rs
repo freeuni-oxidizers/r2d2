@@ -129,7 +129,6 @@ pub struct ResultTask {
     pub rdd_partition_id: RddPartitionId,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TaskKind {
     ResultTask(ResultTask),

@@ -2,8 +2,8 @@ use std::{fmt::Debug, ops::Add, path::PathBuf, process::exit};
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{core::rdd::shuffle_rdd::Aggregator, master::MasterService, worker, Args, Config};
 use crate::core::rdd::union_rdd::UnionRdd;
+use crate::{core::rdd::shuffle_rdd::Aggregator, master::MasterService, worker, Args, Config};
 
 use self::{
     file_writer::FileWriter,
@@ -69,7 +69,6 @@ impl Spark {
                     args.id,
                     args.port,
                     config.master_addr.clone(),
-                    args.fs_root,
                     config,
                 )
                 .await;
@@ -145,13 +144,13 @@ impl Spark {
         path: PathBuf,
         num_partitions: usize,
     ) -> RddIndex<(PathBuf, Vec<u8>)> {
-        let data: Vec<Vec<PathBuf>> = (0..num_partitions).map(|i| {
-            vec![path.join(i.to_string())]
-        }).collect();
+        let data: Vec<Vec<PathBuf>> = (0..num_partitions)
+            .map(|i| vec![path.join(i.to_string())])
+            .collect();
         let rdd = self.new_from_list(data);
         self.map(rdd, |path| {
             let data = std::fs::read(&path).expect("Error: while reading partition file");
-            (path, data) 
+            (path, data)
         })
     }
 
@@ -494,25 +493,38 @@ impl Context for Spark {
 
     fn union<T: Data>(&mut self, deps: &[RddIndex<T>]) -> RddIndex<T> {
         let idx = RddIndex::new(RddId::new());
-        let deps: Vec<(RddId,usize)> = deps.iter().map(|rdd_idx| (rdd_idx.id, self.graph.get_rdd(rdd_idx.id).unwrap().partitions_num())).collect();
+        let deps: Vec<(RddId, usize)> = deps
+            .iter()
+            .map(|rdd_idx| {
+                (
+                    rdd_idx.id,
+                    self.graph.get_rdd(rdd_idx.id).unwrap().partitions_num(),
+                )
+            })
+            .collect();
         let partitions_num = deps.iter().map(|(_, np)| np).sum::<usize>();
         self.graph.store_new_rdd(UnionRdd {
-            idx, 
+            idx,
             deps,
             partitions_num,
         });
         idx
     }
 
-    fn cogroup<K, V, W, P>(&mut self, left: RddIndex<(K, V)>, right: RddIndex<(K, W)>, partitioner: P) -> RddIndex<(K, (Vec<V>, Vec<W>))> 
-    where 
+    fn cogroup<K, V, W, P>(
+        &mut self,
+        left: RddIndex<(K, V)>,
+        right: RddIndex<(K, W)>,
+        partitioner: P,
+    ) -> RddIndex<(K, (Vec<V>, Vec<W>))>
+    where
         K: Data + Eq + std::hash::Hash,
-        V: Data, 
-        W: Data, 
+        V: Data,
+        W: Data,
         P: Partitioner<Key = K>,
     {
         // TODO: don't map w fn ptr
-        
+
         #[derive(Clone, serde::Serialize, serde::Deserialize)]
         enum VW<V, W> {
             Left(V),
@@ -534,7 +546,12 @@ impl Context for Spark {
         })
     }
 
-    fn join<K, V, W, P>(&mut self, left: RddIndex<(K, V)>, right: RddIndex<(K, W)>, partitioner: P) -> RddIndex<(K, (V, W))> 
+    fn join<K, V, W, P>(
+        &mut self,
+        left: RddIndex<(K, V)>,
+        right: RddIndex<(K, W)>,
+        partitioner: P,
+    ) -> RddIndex<(K, (V, W))>
     where
         K: Data + Eq + std::hash::Hash,
         V: Data,

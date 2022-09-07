@@ -1,6 +1,4 @@
-#![allow(non_snake_case)]
-
-use std::path::PathBuf;
+#[allow(clippy::type_complexity)]
 
 use serde::Deserialize;
 
@@ -9,14 +7,13 @@ mod master;
 pub mod runner;
 mod worker;
 
+// can't fix diz
+#[allow(clippy::derive_partial_eq_without_eq)]
 pub mod r2d2 {
     tonic::include_proto!("r2d2");
 }
 
 use clap::Parser;
-
-pub const ADDR_BASE: &str = "0.0.0.0";
-pub const MASTER_ADDR: &str = "0.0.0.0:6969";
 
 // This way we can allow user to have their own custom cli.
 /// User can parse this directly from cli args or construct it themselves.
@@ -29,8 +26,8 @@ pub struct Args {
     #[clap(long, takes_value = true)]
     pub id: usize,
 
-    #[clap(short, long, value_parser, value_name = "DIR")]
-    fs_root: PathBuf,
+    // #[clap(short, long, value_parser, value_name = "DIR")]
+    // fs_root: PathBuf,
 
     #[clap(long, takes_value = true, default_value_t = 8888)]
     pub port: usize,
