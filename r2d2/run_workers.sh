@@ -1,3 +1,5 @@
-../../target/release/map_square --id 0 --port 8888 --fs-root ./cache_root &
-# ../../target/release/map_square --id 1 --port 8881 --fs-root ./cache_root &
-# ../../target/release/map_square --id 2 --port 8882 --fs-root ./cache_root &
+#!/usr/bin/env bash
+
+../target/release/examples/$1 --id 0 --port 8880 &
+../target/release/examples/$1 --id 1 --port 8881 &
+../target/release/examples/$1 --id 2 --port 8882 &

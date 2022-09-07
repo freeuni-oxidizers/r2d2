@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::{fmt::Debug, ops::Add, path::PathBuf, process::exit};
 
 use tokio::sync::{mpsc, oneshot};
@@ -125,23 +126,23 @@ impl Spark {
     // }
 
     // spark.save(rdd, |partition: Vec<T>|-> Vec<u8>, directory).await;
-    pub async fn save<T: Data>(
+    pub async fn save<T: Data, P: AsRef<Path>>(
         &mut self,
         rdd: RddIndex<T>,
         serializer: fn(Vec<T>) -> Vec<u8>,
-        path: PathBuf,
+        path: P,
     ) {
-        let rdd = self.map_partitions_with_state(rdd, FileWriter::new(path, serializer));
+        let rdd = self.map_partitions_with_state(rdd, FileWriter::new(path.as_ref().to_path_buf(), serializer));
         self.collect(rdd).await;
     }
 
-    pub async fn read_partitions_from(
+    pub fn read_partitions_from<P: AsRef<Path>>(
         &mut self,
-        path: PathBuf,
+        path: P,
         num_partitions: usize,
     ) -> RddIndex<(PathBuf, Vec<u8>)> {
         let data: Vec<Vec<PathBuf>> = (0..num_partitions)
-            .map(|i| vec![path.join(i.to_string())])
+            .map(|i| vec![path.as_ref().join(i.to_string())])
             .collect();
         let rdd = self.new_from_list(data);
         self.map(rdd, |path| {
