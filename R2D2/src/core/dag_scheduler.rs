@@ -122,7 +122,12 @@ mod dsu {
                         );
                     }
                 }
-                crate::core::rdd::Dependency::No => {}
+                crate::core::rdd::Dependency::No => {},
+                crate::core::rdd::Dependency::Union(ud) => {
+                    let parent_rpid = ud.get_partition_depp(rpid.partition_id);
+                    self.join(rpid, parent_rpid);
+                    self.dfs(graph, parent_rpid)
+                 }
             }
         }
 
@@ -348,7 +353,10 @@ impl DagScheduler {
                 }
                 self.stage_tasks.insert(rdd_id, stage_tasks);
             }
-            Dependency::No => {}
+            Dependency::No => {},
+            Dependency::Union(ud) => {
+                ud.deps.iter().for_each(|(dep_rid, _)| self.create_stage_tasks(graph, *dep_rid));
+            }
         }
     }
 
@@ -371,6 +379,11 @@ impl DagScheduler {
                 vec![node]
             }
             Dependency::No => Vec::new(),
+            Dependency::Union(ud) => 
+                self.get_direct_dependencies(
+                    graph,
+                    ud.get_partition_depp(node.partition_id)
+                )
         }
     }
 

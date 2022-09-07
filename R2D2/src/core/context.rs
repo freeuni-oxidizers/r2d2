@@ -31,7 +31,23 @@ pub trait Context {
     fn sample<T>(&mut self, rdd: RddIndex<T>, amount: usize) -> RddIndex<T> 
     where 
         T: Data;
+
+    fn union<T: Data>(&mut self, deps: &[RddIndex<T>]) -> RddIndex<T>;
     
+    fn cogroup<K, V, W, P>(&mut self, left: RddIndex<(K, V)>, right: RddIndex<(K, W)>, partitioner: P) -> RddIndex<(K, (Vec<V>, Vec<W>))> 
+    where 
+        K: Data + Eq + std::hash::Hash,
+        V: Data, 
+        W: Data, 
+        P: Partitioner<Key = K>;
+
+    fn join<K, V, W, P>(&mut self, left: RddIndex<(K, V)>, right: RddIndex<(K, W)>, partitioner: P) -> RddIndex<(K, (V, W))> 
+    where
+        K: Data + Eq + std::hash::Hash,
+        V: Data,
+        W: Data,
+        P: Partitioner<Key = K>;
+
     fn partition_by<T: Data, P>(&mut self, rdd: RddIndex<T>, partitioner: P) -> RddIndex<T>
     where
         P: Partitioner<Key = T>;
