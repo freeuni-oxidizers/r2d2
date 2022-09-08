@@ -170,7 +170,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, config: Config) 
         .await
         .expect("Worker couldn't connect to master");
 
-    let executor = Executor::new();
+    let executor = Executor::new(id);
 
     {
         let cache = executor.received_buckets.clone();
@@ -203,7 +203,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, config: Config) 
         let worker_message: WorkerMessage =
             serde_json::from_slice(&serialized_task).expect("bad worker message");
 
-        println!("Worker #{id} got message={worker_message:?}");
+        // println!("Worker #{id} got message={worker_message:?}");
         match worker_message {
             WorkerMessage::NewGraph(g) => {
                 graph = g;
@@ -221,14 +221,11 @@ pub async fn start(id: usize, port: usize, master_addr: String, config: Config) 
                             let result_task = result_task.clone();
                             let mut executor = executor.clone();
                             thread::spawn(move || {
-                                executor.resolve(&graph, rdd_pid);
+                                let materialized_rdd_result = executor.resolve(&graph, rdd_pid);
                                 let rdd =
                                     graph.get_rdd(result_task.rdd_partition_id.rdd_id).unwrap();
                                 let materialized_rdd_result = rdd.serialize_raw_data(
-                                    &*executor
-                                        .cache
-                                        .take_as_any(rdd_pid.rdd_id, rdd_pid.partition_id, rdd)
-                                        .unwrap(),
+                                    &*materialized_rdd_result,
                                 );
                                 drop(task_run_permit);
                                 materialized_tx.send(materialized_rdd_result).unwrap()

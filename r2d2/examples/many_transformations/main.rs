@@ -1,5 +1,3 @@
-use std::{os::raw, path::PathBuf};
-
 use clap::Parser;
 use r2d2::{
     core::{context::Context, spark::hash_partitioner::HashPartitioner, spark::Spark},

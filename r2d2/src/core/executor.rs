@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -13,60 +14,52 @@ pub struct Executor {
     // this field is basically storing Vec<T>s where T can be different for each id we are not
     // doing Vec<Any> for perf reasons. downcasting is not free
     // This should not be serialized because all workers have this is just a cache
+    pub worker_id: usize,
     pub cache: ResultCache,
     pub received_buckets: Arc<Mutex<HashMap<(RddPartitionId, usize), Vec<u8>>>>,
 }
 
-impl Default for Executor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Executor {
-    pub fn new() -> Self {
+    pub fn new(worker_id: usize) -> Self {
         Self {
+            worker_id,
             cache: ResultCache::default(),
             received_buckets: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 
     // pub fn resolve
-    pub fn resolve(&mut self, graph: &Graph, id: RddPartitionId) {
+    pub fn resolve(&mut self, graph: &Graph, id: RddPartitionId) -> Box<dyn Any + Send> {
         assert!(graph.contains(id.rdd_id), "id not found in context");
-        if self.cache.has(id) {
-            return;
+        if let Some(res) = self.cache.take_as_any(
+            id.rdd_id,
+            id.partition_id,
+            graph.get_rdd(id.rdd_id).unwrap(),
+        ) {
+            return res;
         }
-
-        let rdd_type = graph.get_rdd(id.rdd_id).unwrap().rdd_dependency();
-        if let Dependency::Narrow(dep_rdd) = rdd_type {
-            self.resolve(
-                graph,
-                RddPartitionId {
-                    rdd_id: dep_rdd,
-                    partition_id: id.partition_id,
-                },
-            )
-        };
-        // First resolve all the deps
 
         match graph.get_rdd(id.rdd_id).unwrap().work_fns() {
             RddWorkFns::Narrow(narrow_work) => {
                 let rdd = graph.get_rdd(id.rdd_id).unwrap();
                 let res = match rdd.rdd_dependency() {
                     Dependency::Narrow(prev_rdd_id) => {
-                        let prev_rdd = graph.get_rdd(prev_rdd_id).unwrap();
-                        narrow_work.work(
-                            self.cache
-                                .take_as_any(prev_rdd_id, id.partition_id, prev_rdd),
-                            id.partition_id,
-                        )
+                        let materialized_prev = self.resolve(
+                            graph,
+                            RddPartitionId {
+                                rdd_id: prev_rdd_id,
+                                partition_id: id.partition_id,
+                            },
+                        );
+
+                        narrow_work.work(Some(materialized_prev), id.partition_id)
                     }
                     Dependency::No => narrow_work.work(None, id.partition_id),
                     Dependency::Wide(_) => unreachable!(),
                     Dependency::Union(_) => unreachable!(),
                 };
-                self.cache.put(id, res);
+                return res;
+                // self.cache.put(id, res);
             }
             RddWorkFns::Wide(aggr_fns) => {
                 // TODO: error handling - if bucket is missing (is None)
@@ -74,7 +67,11 @@ impl Executor {
 
                 if let Dependency::Wide(depp) = graph.get_rdd(id.rdd_id).unwrap().rdd_dependency() {
                     let narrow_partition_nums = graph.get_rdd(depp).unwrap().partitions_num();
+                    println!("need to fetch buckets for {:?}, #{}", id, self.worker_id);
                     let mut received_buckets = { self.received_buckets.lock().unwrap() };
+                    if self.cache.has(id) {
+                        return self.cache.take_as_any(id.rdd_id, id.partition_id, rdd).unwrap();
+                    }
                     let buckets: Vec<_> = (0..narrow_partition_nums)
                         .map(|narrow_partition_id| {
                             rdd.deserialize_raw_data(
@@ -87,24 +84,28 @@ impl Executor {
                     self.cache.put(id, wides_result);
                     // we keep stage results
                     self.cache.keep_when_taken(id);
+                    println!("saved wide result for {:?}, #{}", id, self.worker_id);
+                    return self.cache.take_as_any(id.rdd_id, id.partition_id, rdd).unwrap();
                 };
+                unreachable!();
             }
             RddWorkFns::Union => {
                 if let Dependency::Union(union_deps) =
                     graph.get_rdd(id.rdd_id).unwrap().rdd_dependency()
                 {
                     let dep_partition = union_deps.get_partition_depp(id.partition_id);
-                    self.resolve(graph, dep_partition);
-                    let data = self
-                        .cache
-                        .take_as_any(
-                            dep_partition.rdd_id,
-                            dep_partition.partition_id,
-                            graph.get_rdd(dep_partition.rdd_id).unwrap(),
-                        )
-                        .unwrap();
-                    self.cache.put(id, data);
+                    let data = self.resolve(graph, dep_partition);
+                    // let data = self
+                    //     .cache
+                    //     .take_as_any(
+                    //         dep_partition.rdd_id,
+                    //         dep_partition.partition_id,
+                    //         graph.get_rdd(dep_partition.rdd_id).unwrap(),
+                    //     )
+                    //     .unwrap();
+                    return data;
                 }
+                unreachable!();
             }
         };
     }
@@ -116,7 +117,7 @@ impl Executor {
         // if final task is not wide, it is ResultTask type, which is not handled here (not my fn's prob).
         if let Dependency::Wide(dep_id) = graph.get_rdd(task.wide_rdd_id).unwrap().rdd_dependency()
         {
-            self.resolve(
+            let res = self.resolve(
                 graph,
                 RddPartitionId {
                     rdd_id: dep_id,
@@ -126,11 +127,8 @@ impl Executor {
             // perform bucketisation of final data
             let rdd = graph.get_rdd(task.wide_rdd_id).unwrap();
             if let RddWorkFns::Wide(work) = rdd.work_fns() {
-                let dep_rdd = graph.get_rdd(dep_id).unwrap();
                 let buckets = work.partition_data(
-                    self.cache
-                        .take_as_any(dep_id, task.narrow_partition_id, dep_rdd)
-                        .unwrap(),
+                    res,
                 );
 
                 let aggred_buckets: Vec<_> = buckets

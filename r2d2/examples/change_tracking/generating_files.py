@@ -1,9 +1,9 @@
 #!/usr/bin/python
 import csv
 import random
-from types import ClassMethodDescriptorType
+import sys
 
-records=9000
+records=int(sys.argv[1])
 print("Making %d records\n" % records)
 id = 0
 for partition_id in range(10):

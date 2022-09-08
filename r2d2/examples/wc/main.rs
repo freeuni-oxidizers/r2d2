@@ -23,7 +23,7 @@ async fn main() {
     let config = Args::parse();
     let mut spark = Spark::new(config).await;
 
-    let rdd_in = spark.read_partitions_from("./in", 10);
+    let rdd_in = spark.read_partitions_from("./in", 100);
     let lines = spark.flat_map(rdd_in, |(_path, text)| {
         text.split(|b| *b == b'\n')
             .map(|ln| ln.to_vec())
