@@ -16,8 +16,8 @@ for partition_id in range(10):
   surnames = [name + "shvili" for name in namess]
   cities = ['Delhi', 'Kolkata', 'Chennai', 'Mumbai', 'Salonik', "Tbilisi", "Khashuri", "Batumi", "Sachkhere", "Zestafoni", "Gurjaani", "Telavi", "Abasha"]
 
-  writer_1.writerow(dict(zip(fieldnames, fieldnames)))
-  writer_2.writerow(dict(zip(fieldnames, fieldnames)))
+  # writer_1.writerow(dict(zip(fieldnames, fieldnames)))
+  # writer_2.writerow(dict(zip(fieldnames, fieldnames)))
 
   for i in range(0, records):
     id += 1

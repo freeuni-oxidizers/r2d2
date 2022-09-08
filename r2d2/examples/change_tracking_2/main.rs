@@ -28,6 +28,7 @@ async fn main() {
     let raw_to_row_data: fn((PathBuf, Vec<u8>)) -> Vec<Row> = |(_, raw_data)| {
         raw_data
             .split(|b| *b == b'\n')
+            .filter(|ln|ln.len()>0)
             .map(|ln| ln.split(|b| *b == b',').collect())
             .map(|row: Vec<_>| Row {
                 id: String::from_utf8(row[0].to_vec()).unwrap().parse().unwrap(),
