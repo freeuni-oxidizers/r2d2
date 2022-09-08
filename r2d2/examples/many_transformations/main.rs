@@ -28,7 +28,7 @@ async fn main() {
 
     let rdd = spark.new_from_list(data);
     let mut a_init = spark.flat_map(rdd, |x| vec![x as u64; x]);
-    
+
     let data = vec![
         vec![512, 512, 512],
         vec![512, 512, 512],
@@ -37,16 +37,16 @@ async fn main() {
         vec![512, 512, 512],
         vec![512, 512, 512],
     ];
-    
-    let rdd = spark.new_from_list(data);
-    let mut b_init = spark.flat_map(rdd, |x| vec![x as u64; x]); 
 
-    for _ in 0..10 { 
+    let rdd = spark.new_from_list(data);
+    let mut b_init = spark.flat_map(rdd, |x| vec![x as u64; x]);
+
+    for _ in 0..10 {
         let a = spark.map(a_init, |x| x * 2);
         let b = spark.map(b_init, |x| x * 20);
-        
+
         let a = spark.map(a, |x| (x as f64).sin());
-        let b = spark.map(b, |x| (x as f64).tan());
+        let b = spark.map(b, |x| (x as f64).cos());
 
         let a = spark.filter(a, |x| *x < 0.5);
         let b = spark.filter(b, |x| *x >= 0.5);
