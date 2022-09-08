@@ -2,7 +2,7 @@
 
 FILE=~/am_master
 if [ -f "$FILE" ]; then
-    echo "$FILE exists."
+	./r2d2_bin --id `./get_id.sh` --master --port 6969
 else 
-    echo "$FILE does not exist."
+	./r2d2_bin --id `./get_id.sh` --port 6969
 fi
