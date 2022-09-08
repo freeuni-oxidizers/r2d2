@@ -3,7 +3,7 @@ import csv
 import random
 from types import ClassMethodDescriptorType
 
-records=9000
+records=3*900000
 print("Making %d records\n" % records)
 id = 0
 for partition_id in range(10):
