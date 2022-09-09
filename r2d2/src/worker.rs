@@ -38,7 +38,7 @@ pub async fn send_worker_event(
     worker_event: WorkerEvent,
 ) {
     let result = TaskResultRequest {
-        serialized_task_result: serde_json::to_vec(&worker_event).unwrap(),
+        serialized_task_result: rmp_serde::to_vec(&worker_event).unwrap(),
     };
     master_client
         .post_task_result(Request::new(result))
@@ -201,7 +201,7 @@ pub async fn start(id: usize, port: usize, master_addr: String, config: Config) 
         };
         let serialized_task = get_task_response.serialized_task;
         let worker_message: WorkerMessage =
-            serde_json::from_slice(&serialized_task).expect("bad worker message");
+            rmp_serde::from_slice(&serialized_task).expect("bad worker message");
 
         // println!("Worker #{id} got message={worker_message:?}");
         match worker_message {

@@ -52,7 +52,7 @@ impl Master for MasterService {
         // TODO: maybe tokio tracing?
         let task = task.unwrap_or(WorkerMessage::Wait);
         println!("Sending worker #{id} task={task:?}");
-        let serialized_task = serde_json::to_vec(&task).unwrap();
+        let serialized_task = rmp_serde::to_vec(&task).unwrap();
         Ok(Response::new(GetTaskResponse { serialized_task }))
     }
 
@@ -61,7 +61,7 @@ impl Master for MasterService {
         request: Request<TaskResultRequest>,
     ) -> Result<Response<Empty>, Status> {
         let task_result = request.into_inner().serialized_task_result;
-        let task_result = serde_json::from_slice(&task_result).expect("Bad task result");
+        let task_result = rmp_serde::from_slice(&task_result).expect("Bad task result");
         self.event_sender
             .send(task_result)
             .await

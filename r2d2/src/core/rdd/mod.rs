@@ -259,11 +259,11 @@ where
     // TODO: We don't need ownership.
     fn serialize_raw_data(&self, raw_data: &(dyn Any + Send)) -> Vec<u8> {
         let data: &Vec<T::Item> = raw_data.downcast_ref::<Vec<T::Item>>().unwrap();
-        serde_json::to_vec(data).unwrap()
+        rmp_serde::to_vec(data).unwrap()
     }
 
     fn deserialize_raw_data(&self, serialized_data: Vec<u8>) -> Box<dyn Any + Send> {
-        let data: Vec<T::Item> = serde_json::from_slice(&serialized_data).unwrap();
+        let data: Vec<T::Item> = rmp_serde::from_slice(&serialized_data).unwrap();
         Box::new(data)
     }
 

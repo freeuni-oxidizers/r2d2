@@ -14,8 +14,9 @@ async fn main() {
 
     let rdd = spark.flat_map(rdd, |(_, raw_data)| {
         raw_data.split(|b| *b == b'\n')
+            .filter(|b|b.len()>0)
             .map(|num| String::from_utf8(num.to_vec()).unwrap().parse().unwrap())
-            .collect::<Vec<usize>>()
+            .collect::<Vec<i32>>()
     });
     
     let rdd = spark.sort(rdd, 10).await;

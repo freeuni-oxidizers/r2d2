@@ -380,9 +380,9 @@ impl DagScheduler {
                                     .expect("can't returned materialied result to spark");
                                 self.childs.clear();
                                 self.running_tasks.clear();
-                                self.cached.clear();
-                                self.bucket_aggr_tracker.clear();
-                                self.bucket_aggr_ids.clear();
+                                // self.cached.clear();
+                                // self.bucket_aggr_tracker.clear();
+                                // self.bucket_aggr_ids.clear();
                                 assert!(self.waiting_tasks.is_empty());
                                 break;
                             }
