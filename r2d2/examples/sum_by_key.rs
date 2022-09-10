@@ -11,14 +11,22 @@ async fn main() {
 
     let data = vec![
         vec![
-            ("wow".to_string(), 1),
-            ("ok".to_string(), 100),
-            ("ok".to_string(), 200),
+            ("cougar".to_string(), 2),
+            ("bear".to_string(), 3),
+            ("bear".to_string(), 2),
+            ("squirrel".to_string(), 1),
+            ("turtle".to_string(), 6),
         ],
-        vec![("wow".to_string(), 2), ("x".to_string(), 102)],
+        vec![
+            ("snake".to_string(), 2),
+            ("turtle".to_string(), 5),
+            ("bear".to_string(), 2),
+            ("turtle".to_string(), 2),
+            ("squirrel".to_string(), 2),
+        ],
     ];
     let rdd = spark.new_from_list(data);
-    let rdd = spark.sum_by_key(rdd, HashPartitioner::new(8));
+    let rdd = spark.sum_by_key(rdd, HashPartitioner::new(3));
     let result = spark.collect(rdd).await;
     println!("client code received result = {result:?}");
 }
